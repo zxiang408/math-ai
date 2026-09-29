@@ -209,7 +209,6 @@ confidence 为 0 到 1 之间的小数，表示你对整道题识别与分析的
         model: "openrouter/free",
         temperature: 0.2,
         max_tokens: 1200,
-        response_format: { type: "json_object" },
         messages: [
           {
             role: "user",
