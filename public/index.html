@@ -338,10 +338,11 @@
 
     <div class="notice">
 
-      当前是 V0.1 原型。
+      当前是 V0.1。
       <br>
-      现在先测试网页界面和上传功能；
-      下一步再接入真正的 AI 模型。
+      已接入 OpenRouter 免费模型路由，用于测试错题照片识别与 AI 分析。
+      <br>
+      后续再加入知识点库、针对性出题和分步骤引导。
 
     </div>
 
@@ -465,81 +466,173 @@
   );
 
 
-  // V0.1 演示分析
-  analyzeButton.addEventListener(
-    "click",
-    function () {
+  let selectedFile = null;
 
-      status.textContent =
-        "正在进行 AI 分析……";
+  fileInput.addEventListener("change", function () {
+    const file = fileInput.files[0];
 
+    if (!file) {
+      selectedFile = null;
+      return;
+    }
 
-      analyzeButton.disabled =
-        true;
+    if (!file.type.startsWith("image/")) {
+      selectedFile = null;
+      analyzeButton.disabled = true;
+      status.textContent = "请选择图片文件。";
+      return;
+    }
 
+    selectedFile = file;
 
-      setTimeout(
-        function () {
+    const imageURL = URL.createObjectURL(file);
+    preview.src = imageURL;
+    preview.style.display = "block";
 
-          document.getElementById(
-            "question"
-          ).textContent =
-            "示例：25.5 × 25 = ?";
-
-
-          document.getElementById(
-            "studentAnswer"
-          ).textContent =
-            "示例：787.5";
-
-
-          document.getElementById(
-            "correctAnswer"
-          ).textContent =
-            "637.5";
+    analyzeButton.disabled = false;
+    resultCard.style.display = "none";
+    status.textContent = "图片已选择，可以开始 AI 分析。";
+  });
 
 
-          document.getElementById(
-            "knowledgePoints"
-          ).innerHTML =
-            `
-              <span class="tag">小数乘法</span>
-              <span class="tag">小数×整数</span>
-              <span class="tag">计算准确性</span>
-            `;
+  async function fileToDataUrl(file) {
+    const MAX_SIDE = 1600;
 
+    const objectUrl = URL.createObjectURL(file);
 
-          document.getElementById(
-            "errorType"
-          ).textContent =
-            "目前仅为演示结果";
+    try {
+      const image = new Image();
 
+      await new Promise(function (resolve, reject) {
+        image.onload = resolve;
+        image.onerror = function () {
+          reject(new Error("图片无法读取，请换一张 JPG、PNG 或 WebP 图片。"));
+        };
+        image.src = objectUrl;
+      });
 
-          document.getElementById(
-            "analysis"
-          ).textContent =
-            "下一阶段将接入真正的 AI，对照片中的题目、答案、计算过程和错误原因进行自动分析。";
-
-
-          resultCard.style.display =
-            "block";
-
-
-          status.textContent =
-            "演示分析完成。";
-
-
-          analyzeButton.disabled =
-            false;
-
-        },
-        800
+      const scale = Math.min(
+        1,
+        MAX_SIDE / Math.max(image.naturalWidth, image.naturalHeight)
       );
 
-    }
-  );
+      const width = Math.max(1, Math.round(image.naturalWidth * scale));
+      const height = Math.max(1, Math.round(image.naturalHeight * scale));
 
-</script>
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+
+      const context = canvas.getContext("2d");
+      context.drawImage(image, 0, 0, width, height);
+
+      return canvas.toDataURL("image/jpeg", 0.85);
+    } finally {
+      URL.revokeObjectURL(objectUrl);
+    }
+  }
+
+
+  function renderKnowledgePoints(points) {
+    const container = document.getElementById("knowledgePoints");
+    container.textContent = "";
+
+    if (!Array.isArray(points) || points.length === 0) {
+      container.textContent = "未识别到明确知识点";
+      return;
+    }
+
+    points.forEach(function (point) {
+      const tag = document.createElement("span");
+      tag.className = "tag";
+      tag.textContent = point;
+      container.appendChild(tag);
+    });
+  }
+
+
+  function renderResult(data) {
+    document.getElementById("question").textContent =
+      data.question || "无法确认";
+
+    document.getElementById("studentAnswer").textContent =
+      data.student_answer || "无法确认";
+
+    document.getElementById("correctAnswer").textContent =
+      data.correct_answer || "无法确认";
+
+    renderKnowledgePoints(data.knowledge_points);
+
+    document.getElementById("errorType").textContent =
+      data.error_type || "无法判断";
+
+    document.getElementById("analysis").textContent =
+      data.analysis || "暂无分析结果";
+
+    resultCard.style.display = "block";
+  }
+
+
+  // 调用 Cloudflare Worker 后端
+  analyzeButton.addEventListener("click", async function () {
+    if (!selectedFile) {
+      status.textContent = "请先选择一张错题照片。";
+      return;
+    }
+
+    status.textContent = "正在上传图片并进行 AI 分析……";
+    analyzeButton.disabled = true;
+    clearButton.disabled = true;
+    resultCard.style.display = "none";
+
+    try {
+      const dataUrl = await fileToDataUrl(selectedFile);
+
+      const response = await fetch("/api/analyze", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          image: dataUrl,
+          mimeType: "image/jpeg"
+        })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "AI 分析失败，请稍后再试。");
+      }
+
+      renderResult(data);
+
+      const confidenceText =
+        typeof data.confidence === "number"
+          ? `（识别把握度 ${Math.round(data.confidence * 100)}%）`
+          : "";
+
+      status.textContent =
+        data.unclear
+          ? "分析完成，但照片中有内容不够清晰，请核对结果。" + confidenceText
+          : "AI 分析完成。" + confidenceText;
+
+    } catch (error) {
+      console.error(error);
+      status.textContent =
+        "分析失败：" + (error.message || "未知错误");
+    } finally {
+      analyzeButton.disabled = false;
+      clearButton.disabled = false;
+    }
+  });
+
+
+  // 清空时同步清理已选择的文件
+  clearButton.addEventListener("click", function () {
+    selectedFile = null;
+  });
+
 
 </body>
 </html>
