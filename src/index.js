@@ -13,24 +13,93 @@ function jsonResponse(data, status = 200, request) {
   return new Response(JSON.stringify(data), { status, headers });
 }
 
-function extractJson(text) {
-  if (typeof text !== "string") return null;
+function contentToText(content) {
+  if (typeof content === "string") return content;
+
+  if (Array.isArray(content)) {
+    return content
+      .map(function (part) {
+        if (typeof part === "string") return part;
+        if (part && typeof part.text === "string") return part.text;
+        if (part && typeof part.content === "string") return part.content;
+        return "";
+      })
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  if (content && typeof content === "object") {
+    if (typeof content.text === "string") return content.text;
+    if (typeof content.content === "string") return content.content;
+  }
+
+  return "";
+}
+
+function extractJson(value) {
+  const text = contentToText(value).trim();
+  if (!text) return null;
 
   try {
     return JSON.parse(text);
-  } catch (_) {
-    // Some models may wrap JSON in Markdown fences even when JSON mode is requested.
-    const start = text.indexOf("{");
-    const end = text.lastIndexOf("}");
-    if (start >= 0 && end > start) {
-      try {
-        return JSON.parse(text.slice(start, end + 1));
-      } catch (_) {
-        return null;
+  } catch (_) {}
+
+  let unfenced = text;
+  if (unfenced.startsWith("```json")) {
+    unfenced = unfenced.slice(7);
+  } else if (unfenced.startsWith("```")) {
+    unfenced = unfenced.slice(3);
+  }
+  if (unfenced.endsWith("```")) {
+    unfenced = unfenced.slice(0, -3);
+  }
+  unfenced = unfenced.trim();
+
+  try {
+    return JSON.parse(unfenced);
+  } catch (_) {}
+
+  const first = unfenced.indexOf("{");
+  if (first < 0) return null;
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = first; i < unfenced.length; i++) {
+    const ch = unfenced[i];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (ch === "\"") {
+      inString = true;
+      continue;
+    }
+
+    if (ch === "{") {
+      depth++;
+    } else if (ch === "}") {
+      depth--;
+      if (depth === 0) {
+        try {
+          return JSON.parse(unfenced.slice(first, i + 1));
+        } catch (_) {
+          return null;
+        }
       }
     }
-    return null;
   }
+
+  return null;
 }
 
 function normalizeResult(result) {
@@ -184,10 +253,12 @@ confidence 为 0 到 1 之间的小数，表示你对整道题识别与分析的
   const parsed = extractJson(content);
 
   if (!parsed) {
+    const preview = contentToText(content).slice(0, 800);
+
     return jsonResponse(
       {
-        error: "AI 返回的结果不是有效的 JSON。",
-        raw_preview: typeof content === "string" ? content.slice(0, 500) : "",
+        error: "AI 返回的内容无法解析为 JSON。",
+        raw_preview: preview,
       },
       502,
       request,
