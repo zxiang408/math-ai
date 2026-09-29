@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <title>小学数学 AI</title>
+
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: Arial, "Microsoft YaHei", sans-serif;
+      background: #f5f7fb;
+      color: #222;
+    }
+
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 30px 20px 50px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 32px;
+    }
+
+    .subtitle {
+      margin-top: 8px;
+      color: #667085;
+      font-size: 16px;
+    }
+
+    .card {
+      background: white;
+      border-radius: 16px;
+      padding: 24px;
+      margin-top: 20px;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
+    }
+
+    .card h2 {
+      margin-top: 0;
+      font-size: 20px;
+    }
+
+    .upload-area {
+      border: 2px dashed #98a2b3;
+      border-radius: 14px;
+      padding: 40px 20px;
+      text-align: center;
+      cursor: pointer;
+      background: #fafafa;
+    }
+
+    .upload-area:hover {
+      background: #f2f4f7;
+    }
+
+    .upload-icon {
+      font-size: 42px;
+      margin-bottom: 10px;
+    }
+
+    .upload-text {
+      font-size: 17px;
+      font-weight: bold;
+    }
+
+    .upload-tip {
+      margin-top: 8px;
+      color: #667085;
+      font-size: 14px;
+    }
+
+    #fileInput {
+      display: none;
+    }
+
+    #preview {
+      display: none;
+      max-width: 100%;
+      max-height: 400px;
+      margin: 20px auto 0;
+      border-radius: 10px;
+    }
+
+    .button-row {
+      margin-top: 20px;
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    button {
+      border: none;
+      border-radius: 10px;
+      padding: 12px 20px;
+      font-size: 16px;
+      cursor: pointer;
+    }
+
+    .primary {
+      background: #2563eb;
+      color: white;
+    }
+
+    .primary:hover {
+      background: #1d4ed8;
+    }
+
+    .secondary {
+      background: #e5e7eb;
+      color: #222;
+    }
+
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .status {
+      margin-top: 14px;
+      min-height: 24px;
+      color: #475467;
+    }
+
+    .result {
+      display: none;
+      margin-top: 20px;
+    }
+
+    .result-item {
+      padding: 16px;
+      margin-top: 12px;
+      border-radius: 10px;
+      background: #f8fafc;
+    }
+
+    .result-title {
+      font-weight: bold;
+      margin-bottom: 8px;
+    }
+
+    .tag {
+      display: inline-block;
+      padding: 6px 10px;
+      margin: 4px;
+      border-radius: 999px;
+      background: #e0e7ff;
+      font-size: 14px;
+    }
+
+    .notice {
+      margin-top: 15px;
+      padding: 12px;
+      border-radius: 10px;
+      background: #fff7ed;
+      color: #9a3412;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+
+    .footer {
+      margin-top: 30px;
+      text-align: center;
+      color: #98a2b3;
+      font-size: 13px;
+    }
+  </style>
+</head>
+
+<body>
+
+<div class="container">
+
+  <h1>小学数学 AI</h1>
+
+  <div class="subtitle">
+    我的专属数学 AI 辅导系统
+  </div>
+
+
+  <!-- 上传错题 -->
+  <div class="card">
+
+    <h2>📷 上传错题</h2>
+
+    <div
+      class="upload-area"
+      id="uploadArea"
+    >
+
+      <div class="upload-icon">
+        📷
+      </div>
+
+      <div class="upload-text">
+        点击这里上传孩子的错题照片
+      </div>
+
+      <div class="upload-tip">
+        支持 JPG、PNG、WebP 图片
+      </div>
+
+      <input
+        type="file"
+        id="fileInput"
+        accept="image/*"
+      >
+
+      <img
+        id="preview"
+        alt="错题照片预览"
+      >
+
+    </div>
+
+
+    <div class="button-row">
+
+      <button
+        class="primary"
+        id="analyzeButton"
+        disabled
+      >
+        开始 AI 分析
+      </button>
+
+      <button
+        class="secondary"
+        id="clearButton"
+      >
+        清空
+      </button>
+
+    </div>
+
+
+    <div
+      class="status"
+      id="status"
+    ></div>
+
+  </div>
+
+
+
+  <!-- AI分析结果 -->
+  <div
+    class="card result"
+    id="resultCard"
+  >
+
+    <h2>🧠 AI 分析结果</h2>
+
+
+    <div class="result-item">
+
+      <div class="result-title">
+        题目
+      </div>
+
+      <div id="question">
+        -
+      </div>
+
+    </div>
+
+
+    <div class="result-item">
+
+      <div class="result-title">
+        孩子的答案
+      </div>
+
+      <div id="studentAnswer">
+        -
+      </div>
+
+    </div>
+
+
+    <div class="result-item">
+
+      <div class="result-title">
+        正确答案
+      </div>
+
+      <div id="correctAnswer">
+        -
+      </div>
+
+    </div>
+
+
+    <div class="result-item">
+
+      <div class="result-title">
+        涉及知识点
+      </div>
+
+      <div id="knowledgePoints">
+      </div>
+
+    </div>
+
+
+    <div class="result-item">
+
+      <div class="result-title">
+        错误类型
+      </div>
+
+      <div id="errorType">
+        -
+      </div>
+
+    </div>
+
+
+    <div class="result-item">
+
+      <div class="result-title">
+        AI 分析
+      </div>
+
+      <div id="analysis">
+        -
+      </div>
+
+    </div>
+
+
+    <div class="notice">
+
+      当前是 V0.1 原型。
+      <br>
+      现在先测试网页界面和上传功能；
+      下一步再接入真正的 AI 模型。
+
+    </div>
+
+  </div>
+
+
+  <div class="footer">
+    小学数学 AI · V0.1
+  </div>
+
+</div>
+
+
+
+<script>
+
+  const uploadArea =
+    document.getElementById("uploadArea");
+
+  const fileInput =
+    document.getElementById("fileInput");
+
+  const preview =
+    document.getElementById("preview");
+
+  const analyzeButton =
+    document.getElementById("analyzeButton");
+
+  const clearButton =
+    document.getElementById("clearButton");
+
+  const status =
+    document.getElementById("status");
+
+  const resultCard =
+    document.getElementById("resultCard");
+
+
+  // 点击上传区域
+  uploadArea.addEventListener(
+    "click",
+    function () {
+
+      fileInput.click();
+
+    }
+  );
+
+
+  // 选择图片
+  fileInput.addEventListener(
+    "change",
+    function () {
+
+      const file =
+        fileInput.files[0];
+
+      if (!file) {
+        return;
+      }
+
+
+      if (!file.type.startsWith("image/")) {
+
+        status.textContent =
+          "请选择图片文件。";
+
+        return;
+
+      }
+
+
+      const imageURL =
+        URL.createObjectURL(file);
+
+      preview.src =
+        imageURL;
+
+      preview.style.display =
+        "block";
+
+
+      analyzeButton.disabled =
+        false;
+
+
+      status.textContent =
+        "图片已选择，可以开始分析。";
+
+    }
+  );
+
+
+  // 清空
+  clearButton.addEventListener(
+    "click",
+    function () {
+
+      fileInput.value =
+        "";
+
+      preview.src =
+        "";
+
+      preview.style.display =
+        "none";
+
+
+      analyzeButton.disabled =
+        true;
+
+
+      status.textContent =
+        "";
+
+
+      resultCard.style.display =
+        "none";
+
+    }
+  );
+
+
+  // V0.1 演示分析
+  analyzeButton.addEventListener(
+    "click",
+    function () {
+
+      status.textContent =
+        "正在进行 AI 分析……";
+
+
+      analyzeButton.disabled =
+        true;
+
+
+      setTimeout(
+        function () {
+
+          document.getElementById(
+            "question"
+          ).textContent =
+            "示例：25.5 × 25 = ?";
+
+
+          document.getElementById(
+            "studentAnswer"
+          ).textContent =
+            "示例：787.5";
+
+
+          document.getElementById(
+            "correctAnswer"
+          ).textContent =
+            "637.5";
+
+
+          document.getElementById(
+            "knowledgePoints"
+          ).innerHTML =
+            `
+              <span class="tag">小数乘法</span>
+              <span class="tag">小数×整数</span>
+              <span class="tag">计算准确性</span>
+            `;
+
+
+          document.getElementById(
+            "errorType"
+          ).textContent =
+            "目前仅为演示结果";
+
+
+          document.getElementById(
+            "analysis"
+          ).textContent =
+            "下一阶段将接入真正的 AI，对照片中的题目、答案、计算过程和错误原因进行自动分析。";
+
+
+          resultCard.style.display =
+            "block";
+
+
+          status.textContent =
+            "演示分析完成。";
+
+
+          analyzeButton.disabled =
+            false;
+
+        },
+        800
+      );
+
+    }
+  );
+
+</script>
+
+</body>
+</html>
