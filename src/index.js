@@ -195,20 +195,25 @@ async function analyzeImage(request, env) {
 }
 confidence 为 0 到 1 之间的小数，表示你对整道题识别与分析的把握程度。`;
 
-  const upstreamResponse = await fetch(
-    "https://openrouter.ai/api/v1/chat/completions",
-    {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${env.OPENROUTER_API_KEY}`,
-        "Content-Type": "application/json",
-        "HTTP-Referer": "https://math-ai.zxiang88688.workers.dev",
-        "X-Title": "小学数学 AI",
-      },
-      body: JSON.stringify({
-        model: "openrouter/free",
-        temperature: 0.2,
-        max_tokens: 1200,
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 30000);
+
+  let upstreamResponse;
+  try {
+    upstreamResponse = await fetch(
+      "https://openrouter.ai/api/v1/chat/completions",
+      {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${env.OPENROUTER_API_KEY}`,
+          "Content-Type": "application/json",
+          "HTTP-Referer": "https://math-ai.zxiang88688.workers.dev",
+          "X-Title": "小学数学 AI",
+        },
+        body: JSON.stringify({
+          model: "openrouter/free",
+          temperature: 0.2,
+          max_tokens: 800,
         messages: [
           {
             role: "user",
@@ -220,10 +225,34 @@ confidence 为 0 到 1 之间的小数，表示你对整道题识别与分析的
               },
             ],
           },
-        ],
-      }),
-    },
-  );
+          ],
+        }),
+        signal: controller.signal,
+      },
+    );
+  } catch (error) {
+    if (error && error.name === "AbortError") {
+      return jsonResponse(
+        {
+          error: "AI 服务响应超时（30 秒）。免费模型当前可能繁忙，请稍后再试。",
+          code: "OPENROUTER_TIMEOUT",
+        },
+        504,
+        request,
+      );
+    }
+
+    return jsonResponse(
+      {
+        error: "连接 OpenRouter 失败：" + (error?.message || "未知网络错误"),
+        code: "OPENROUTER_NETWORK_ERROR",
+      },
+      502,
+      request,
+    );
+  } finally {
+    clearTimeout(timeoutId);
+  }
 
   let upstreamBody;
   try {
