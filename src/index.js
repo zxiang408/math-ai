@@ -211,10 +211,11 @@ confidence 为 0 到 1 之间的小数，表示你对整道题识别与分析的
           "X-Title": "小学数学 AI",
         },
         body: JSON.stringify({
-          model: "openrouter/free",
+          model: "google/gemma-4-26b-a4b-it:free",
           temperature: 0.2,
           max_tokens: 800,
-        messages: [
+          response_format: { type: "json_object" },
+          messages: [
           {
             role: "user",
             content: [
