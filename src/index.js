@@ -3,7 +3,7 @@ import {
   extractSingleNumericValue
 } from "../public/math-engine.js";
 
-const APP_VERSION = "V0.18.0";
+const APP_VERSION = "V0.22.0";
 
 const JSON_HEADERS = {
   "Content-Type": "application/json; charset=UTF-8",
