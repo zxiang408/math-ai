@@ -565,7 +565,7 @@
 
     <div class="notice">
 
-      当前是 V0.8.0。
+      当前是 V0.9.0。
       <br>
       已接入 OpenRouter 免费模型路由，用于错题照片识别与 AI 分析。
       <br>
@@ -701,9 +701,9 @@
   </div>
 
   <div class="footer">
-    小学数学 AI · V0.8.0
+    小学数学 AI · V0.9.0
     <br>
-    <span id="appVersion">程序版本：V0.8.0</span>
+    <span id="appVersion">程序版本：V0.9.0</span>
   </div>
 
 </div>
@@ -1290,6 +1290,153 @@
     };
   }
 
+  function getTrainingEvidenceFocus(point) {
+    const records = loadTrainingHistory()
+      .filter(function (item) {
+        return standardizeKnowledgePoint(
+          item.knowledge_point
+        ) === point &&
+        item.attempt_type !== "training_completed";
+      });
+
+    if (records.length === 0) {
+      return null;
+    }
+
+    const groups = {};
+
+    records.forEach(function (item) {
+      const key = getTrainingEvidenceKey(item);
+      const label = getTrainingEvidenceLabel(point, item);
+
+      if (!groups[key]) {
+        groups[key] = {
+          key: key,
+          label: label,
+          attempts: 0,
+          failures: 0,
+          passes: 0,
+          simplified: 0,
+          lastCreatedAt: 0
+        };
+      }
+
+      const group = groups[key];
+
+      group.attempts += 1;
+
+      if (item.passed === true) {
+        group.passes += 1;
+      } else {
+        group.failures += 1;
+      }
+
+      if (
+        item.step_mode === "simplified" ||
+        item.simplification_used === true
+      ) {
+        group.simplified += 1;
+      }
+
+      const createdAt =
+        new Date(item.created_at || 0).getTime();
+
+      if (
+        Number.isFinite(createdAt) &&
+        createdAt > group.lastCreatedAt
+      ) {
+        group.lastCreatedAt = createdAt;
+      }
+    });
+
+    const stepOrder = {
+      large_number_parts: 0,
+      total_parts: 1,
+      unit_value: 2,
+      side_scale: 0,
+      area_scale_or_calculation: 1,
+      unchanged_factor: 0,
+      combined_factor_change: 1,
+      multiplication_first: 0,
+      subtraction_after_multiplication: 1,
+      decimal_alignment: 0,
+      decimal_calculation: 1
+    };
+
+    const candidates = Object.values(groups)
+      .filter(function (group) {
+        return (
+          group.key !== "training_completed" &&
+          (
+            group.simplified > 0 ||
+            group.failures >= 2 ||
+            (group.attempts >= 3 && group.failures >= 1)
+          )
+        );
+      })
+      .sort(function (a, b) {
+        function score(group) {
+          const failureRate =
+            group.attempts > 0
+              ? group.failures / group.attempts
+              : 0;
+
+          const isStep =
+            group.key !== "overall_independent_answer";
+
+          return (
+            (isStep ? 100 : 0) +
+            group.simplified * 30 +
+            group.failures * 8 +
+            failureRate * 10
+          );
+        }
+
+        const scoreA = score(a);
+        const scoreB = score(b);
+
+        if (scoreA !== scoreB) {
+          return scoreB - scoreA;
+        }
+
+        const orderA =
+          stepOrder[a.key] ?? 99;
+        const orderB =
+          stepOrder[b.key] ?? 99;
+
+        if (orderA !== orderB) {
+          return orderA - orderB;
+        }
+
+        return b.lastCreatedAt - a.lastCreatedAt;
+      });
+
+    if (candidates.length === 0) {
+      return null;
+    }
+
+    const selected = candidates[0];
+
+    const failureRate =
+      selected.attempts > 0
+        ? Math.round(
+            selected.failures /
+            selected.attempts *
+            100
+          )
+        : 0;
+
+    return {
+      key: selected.key,
+      label: selected.label,
+      attempts: selected.attempts,
+      failures: selected.failures,
+      passes: selected.passes,
+      simplified: selected.simplified,
+      failureRate: failureRate
+    };
+  }
+
   function getTrainingFocus(point, history, state) {
     const matching = history
       .filter(function (item) {
@@ -1308,11 +1455,20 @@
       ? standardizeErrorType(latest.error_type)
       : "无法判断";
 
+    const evidenceFocus =
+      getTrainingEvidenceFocus(point);
+
     if (state === "unstable") {
       return {
         title: "稳定性变式训练",
         reason: "这个知识点最近一次已经出现复测错误，本轮重点检查能否把方法迁移到新题。",
-        errorType: errorType
+        errorType: errorType,
+        evidenceKey:
+          evidenceFocus?.key || null,
+        evidenceLabel:
+          evidenceFocus?.label || "",
+        evidence:
+          evidenceFocus
       };
     }
 
@@ -1320,7 +1476,46 @@
       return {
         title: "恢复巩固训练",
         reason: "这个知识点正在恢复中，先做一道熟悉结构的题，再进入间隔复测。",
-        errorType: errorType
+        errorType: errorType,
+        evidenceKey:
+          evidenceFocus?.key || null,
+        evidenceLabel:
+          evidenceFocus?.label || "",
+        evidence:
+          evidenceFocus
+      };
+    }
+
+    if (evidenceFocus) {
+      if (
+        evidenceFocus.key ===
+        "overall_independent_answer"
+      ) {
+        return {
+          title: "独立迁移训练",
+          reason:
+            "训练记录显示整题独立作答仍不稳定，下一道题会保留核心方法，同时改变数字或问法，检查孩子能否独立迁移。",
+          errorType: errorType,
+          evidenceKey: evidenceFocus.key,
+          evidenceLabel: evidenceFocus.label,
+          evidence: evidenceFocus
+        };
+      }
+
+      return {
+        title: "核心步骤强化训练",
+        reason:
+          "训练记录显示“" +
+          evidenceFocus.label +
+          "”是目前较容易出错的环节（" +
+          evidenceFocus.failures +
+          "次错误 / " +
+          evidenceFocus.attempts +
+          "次尝试），下一道题会继续围绕这一环节，但改变数字或问法。",
+        errorType: errorType,
+        evidenceKey: evidenceFocus.key,
+        evidenceLabel: evidenceFocus.label,
+        evidence: evidenceFocus
       };
     }
 
@@ -1331,7 +1526,10 @@
       return {
         title: "概念与方法训练",
         reason: "根据历史错误，这次训练优先检查概念/方法是否真正理解。",
-        errorType: errorType
+        errorType: errorType,
+        evidenceKey: null,
+        evidenceLabel: "",
+        evidence: null
       };
     }
 
@@ -1343,14 +1541,20 @@
       return {
         title: "易错点巩固训练",
         reason: "根据历史错误，这次训练重点检查计算与书写准确性。",
-        errorType: errorType
+        errorType: errorType,
+        evidenceKey: null,
+        evidenceLabel: "",
+        evidence: null
       };
     }
 
     return {
       title: "基础巩固训练",
       reason: "先用一道同知识点新题检查基础掌握情况。",
-      errorType: errorType
+      errorType: errorType,
+      evidenceKey: null,
+      evidenceLabel: "",
+      evidence: null
     };
   }
 
@@ -1365,6 +1569,13 @@
 
     const round =
       Math.max(1, Number(sessionIndex || 1));
+
+    // 从 V0.9.0 开始，训练题不仅看错误类型，
+    // 还优先看训练过程中暴露的具体学习证据。
+    const evidenceKey =
+      focus && focus.evidenceKey
+        ? focus.evidenceKey
+        : null;
 
     // 第二道及以后，在掌握基本方法的情况下尽量增加轻度变式，
     // 避免孩子只是记住上一道题的数字。
@@ -1382,7 +1593,10 @@
         };
       }
 
-      if (focusTitle === "稳定性变式训练") {
+      if (
+        focusTitle === "稳定性变式训练" ||
+        evidenceKey === "unit_value"
+      ) {
         const side = randInt(5, 9);
         const newSide = side * 2;
         return {
@@ -1427,7 +1641,13 @@
       const large = small * multiple;
       const sum = small + large;
 
-      if (round >= 2 && focusTitle === "概念与方法训练") {
+      if (
+        round >= 2 &&
+        (
+          focusTitle === "概念与方法训练" ||
+          evidenceKey === "large_number_parts"
+        )
+      ) {
         return {
           question:
             "甲数是乙数的" + multiple +
@@ -1773,7 +1993,13 @@
 
     trainingCard.style.display = "block";
     trainingFocus.textContent =
-      focus.title + " ｜ " + focus.reason +
+      focus.title +
+      (
+        focus.evidenceLabel
+          ? " ｜ 重点：" + focus.evidenceLabel
+          : ""
+      ) +
+      " ｜ " + focus.reason +
       " ｜ 第" + activeTraining.sessionIndex + "道";
     trainingStatus.textContent =
       "题目已生成，请让孩子独立完成。";
