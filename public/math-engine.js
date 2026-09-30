@@ -86,6 +86,11 @@ function parseMixedFraction(value) {
   return null;
 }
 
+export function extractSingleNumericValue(value) {
+  const numbers = extractNumbers(value);
+  return numbers.length === 1 ? numbers[0] : null;
+}
+
 function parseComparableValue(value) {
   const normalized = normalizeAnswer(value);
 
