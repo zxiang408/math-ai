@@ -9383,6 +9383,15 @@ window.MathAILearningModel = {
 
   renderHistory();
 
+  if (cloudSyncButton) {
+    cloudSyncButton.addEventListener(
+      "click",
+      manualCloudSync
+    );
+  }
+
+  initializeCloudSync();
+
 
   // 选择图片
   fileInput.addEventListener(
@@ -9830,15 +9839,6 @@ window.MathAILearningModel = {
       retestCard.style.display = "none";
 
       renderHistory();
-
-  if (cloudSyncButton) {
-    cloudSyncButton.addEventListener(
-      "click",
-      manualCloudSync
-    );
-  }
-
-  initializeCloudSync();
       updateMockModeUI();
 
       status.textContent =
