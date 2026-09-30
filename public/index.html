@@ -1522,9 +1522,6 @@
             ? (Date.now() - lastAttemptDate.getTime()) / 86400000
             : null;
 
-        const testMode =
-          new URLSearchParams(window.location.search).get("testMode") === "1";
-
         if (
           stats.state === "initial_mastery" &&
           daysSinceLast !== null &&
@@ -1566,10 +1563,7 @@
         buttonWrap.className = "history-actions";
         buttonWrap.appendChild(retestButton);
 
-        if (
-          testMode &&
-          stats.state === "initial_mastery"
-        ) {
+        if (stats.state === "initial_mastery") {
           const testButton =
             document.createElement("button");
           testButton.className = "secondary";
