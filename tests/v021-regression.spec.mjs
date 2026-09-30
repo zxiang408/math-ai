@@ -147,6 +147,22 @@ try {
   assert.equal(promptedState.state, "prompted");
 
   // 3) 微技能依赖调度：skill1→skill2→skill3。
+  // 边界：第一个微技能刚好达到 mastered，而第二个尚无记录时，
+  // 下一次实际训练不能回到已掌握的第一个微技能。
+  await page.evaluate((payload) => {
+    localStorage.setItem("math-ai-v0.2-mistake-history", JSON.stringify(payload.mistakes));
+    localStorage.setItem("math-ai-v0.4-retest-history", JSON.stringify([]));
+    localStorage.setItem("math-ai-v0.6-training-history", JSON.stringify(payload.training));
+  }, {
+    mistakes: mistakeRecord(t0),
+    training: trainingRecords("large_number_parts", "倍数 → 份数", 3, t0 + 3600000)
+  });
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.getByRole("button", { name: "🧠 智能安排训练" }).click();
+  await page.waitForTimeout(50);
+  const firstUnlockedFocus = await page.locator("#trainingFocus").textContent();
+  assert.match(firstUnlockedFocus || "", /微技能：总份数/, "第一个微技能掌握后没有自动推进到总份数");
+
   const schedulerCases = [
     {
       name: "解锁总份数",
