@@ -329,6 +329,53 @@
       line-height: 1.6;
     }
 
+    .training-ability-map {
+      margin-top: 12px;
+      padding: 12px;
+      border-radius: 10px;
+      background: #fff;
+      border: 1px solid #e5e7eb;
+    }
+
+    .training-ability-map-title {
+      font-weight: bold;
+      line-height: 1.5;
+    }
+
+    .training-ability-map-note {
+      margin-top: 4px;
+      color: #667085;
+      font-size: 12px;
+      line-height: 1.6;
+    }
+
+    .training-skill-row {
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px solid #eaecf0;
+    }
+
+    .training-skill-name {
+      font-weight: 600;
+      line-height: 1.5;
+    }
+
+    .training-skill-detail {
+      margin-top: 3px;
+      color: #475467;
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    .training-skill-status {
+      display: inline-block;
+      margin-top: 5px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: #f2f4f7;
+      font-size: 12px;
+    }
+
     .history-empty {
       color: #667085;
       padding: 10px 0;
@@ -565,11 +612,11 @@
 
     <div class="notice">
 
-      当前是 V0.9.2。
+      当前是 V0.9.3。
       <br>
       已接入 OpenRouter 免费模型路由，用于错题照片识别与 AI 分析。
       <br>
-      当前已支持基础错题库、知识点标准化统计、能力档案、复测、针对性训练，以及分步骤互动辅导。
+      当前已支持基础错题库、知识点标准化统计、能力档案、复测、针对性训练，以及分步骤互动辅导；V0.9.3 新增训练证据到具体能力环节的自动判断。
 
     </div>
 
@@ -3420,6 +3467,354 @@
     return meta.label;
   }
 
+  function getTrainingEvidenceSessions(
+    point,
+    evidenceKey,
+    trainingHistory
+  ) {
+    const records =
+      (Array.isArray(trainingHistory)
+        ? trainingHistory
+        : []
+      )
+        .filter(function (item) {
+          return (
+            standardizeKnowledgePoint(
+              item.knowledge_point
+            ) === point &&
+            item.attempt_type !== "training_completed" &&
+            getTrainingEvidenceKey(item) === evidenceKey
+          );
+        })
+        .slice()
+        .sort(function (a, b) {
+          return (
+            new Date(a.created_at || 0) -
+            new Date(b.created_at || 0)
+          );
+        });
+
+    const sessions = {};
+
+    records.forEach(function (item, index) {
+      const sessionPart =
+        item.session_index !== undefined &&
+        item.session_index !== null &&
+        String(item.session_index) !== ""
+          ? "session:" + String(item.session_index)
+          : "question:" +
+            normalizeTrainingQuestion(
+              item.question || ""
+            );
+
+      const key =
+        sessionPart ||
+        ("record:" + index);
+
+      if (!sessions[key]) {
+        sessions[key] = {
+          key: key,
+          records: [],
+          lastCreatedAt: 0
+        };
+      }
+
+      sessions[key].records.push(item);
+
+      const createdAt =
+        new Date(item.created_at || 0).getTime();
+
+      if (
+        Number.isFinite(createdAt) &&
+        createdAt > sessions[key].lastCreatedAt
+      ) {
+        sessions[key].lastCreatedAt = createdAt;
+      }
+    });
+
+    return Object.values(sessions)
+      .sort(function (a, b) {
+        return a.lastCreatedAt - b.lastCreatedAt;
+      })
+      .map(function (session) {
+        const recordsInSession =
+          session.records
+            .slice()
+            .sort(function (a, b) {
+              const stepA =
+                Number(a.step_attempt_number || 1);
+              const stepB =
+                Number(b.step_attempt_number || 1);
+
+              if (stepA !== stepB) {
+                return stepA - stepB;
+              }
+
+              return (
+                new Date(a.created_at || 0) -
+                new Date(b.created_at || 0)
+              );
+            });
+
+        const first =
+          recordsInSession[0] || null;
+
+        const prompted =
+          recordsInSession.some(function (item) {
+            return (
+              item.step_mode === "simplified" ||
+              item.simplification_used === true
+            );
+          });
+
+        const firstTryIndependent =
+          Boolean(
+            first &&
+            first.passed === true &&
+            Number(first.step_attempt_number || 1) === 1 &&
+            first.step_mode !== "simplified" &&
+            first.simplification_used !== true
+          );
+
+        const eventuallyPassed =
+          recordsInSession.some(function (item) {
+            return item.passed === true;
+          });
+
+        return {
+          key: session.key,
+          firstTryIndependent:
+            firstTryIndependent,
+          eventuallyPassed:
+            eventuallyPassed,
+          prompted: prompted
+        };
+      });
+  }
+
+  function getTrainingEvidenceAbilityState(
+    point,
+    evidenceKey,
+    trainingHistory
+  ) {
+    const sessions =
+      getTrainingEvidenceSessions(
+        point,
+        evidenceKey,
+        trainingHistory
+      );
+
+    if (sessions.length === 0) {
+      return {
+        state: "insufficient",
+        stateText: "证据不足",
+        sessions: 0,
+        independentPasses: 0,
+        promptedSessions: 0
+      };
+    }
+
+    const independentPasses =
+      sessions.filter(function (session) {
+        return session.firstTryIndependent;
+      }).length;
+
+    const promptedSessions =
+      sessions.filter(function (session) {
+        return session.prompted;
+      }).length;
+
+    const recent =
+      sessions.slice(-3);
+
+    const latest =
+      sessions[sessions.length - 1];
+
+    const recentIndependent =
+      recent.length >= 3 &&
+      recent.every(function (session) {
+        return session.firstTryIndependent &&
+          !session.prompted;
+      });
+
+    if (
+      latest.prompted &&
+      !latest.firstTryIndependent
+    ) {
+      return {
+        state: "prompted",
+        stateText: "仍需提示",
+        sessions: sessions.length,
+        independentPasses: independentPasses,
+        promptedSessions: promptedSessions
+      };
+    }
+
+    if (recentIndependent) {
+      return {
+        state: "mastered",
+        stateText: "已掌握",
+        sessions: sessions.length,
+        independentPasses: independentPasses,
+        promptedSessions: promptedSessions
+      };
+    }
+
+    return {
+      state: "forming",
+      stateText: "正在形成",
+      sessions: sessions.length,
+      independentPasses: independentPasses,
+      promptedSessions: promptedSessions
+    };
+  }
+
+  function getTrainingAbilityDefinitions(point) {
+    const definitions = {
+      "数与代数 / 倍数关系": [
+        {
+          key: "large_number_parts",
+          label: "倍数 → 份数"
+        },
+        {
+          key: "total_parts",
+          label: "总份数"
+        },
+        {
+          key: "unit_value",
+          label: "总和 ÷ 总份数"
+        }
+      ],
+      "图形与几何 / 正方形面积": [
+        {
+          key: "side_scale",
+          label: "边长变化倍数"
+        },
+        {
+          key: "area_scale_or_calculation",
+          label: "面积变化 / 计算"
+        }
+      ],
+      "数与代数 / 积的变化规律": [
+        {
+          key: "unchanged_factor",
+          label: "识别不变因数"
+        },
+        {
+          key: "combined_factor_change",
+          label: "合并两个因数的变化"
+        }
+      ],
+      "数与代数 / 四则运算": [
+        {
+          key: "multiplication_first",
+          label: "先算乘法"
+        },
+        {
+          key: "subtraction_after_multiplication",
+          label: "再算减法"
+        }
+      ],
+      "数与代数 / 小数": [
+        {
+          key: "decimal_alignment",
+          label: "小数点对齐"
+        },
+        {
+          key: "decimal_calculation",
+          label: "小数计算"
+        }
+      ]
+    };
+
+    return definitions[point] || [];
+  }
+
+  function renderTrainingAbilityMap(
+    point,
+    trainingHistory
+  ) {
+    const definitions =
+      getTrainingAbilityDefinitions(point);
+
+    if (definitions.length === 0) {
+      return null;
+    }
+
+    const wrapper =
+      document.createElement("div");
+    wrapper.className =
+      "training-ability-map";
+
+    const title =
+      document.createElement("div");
+    title.className =
+      "training-ability-map-title";
+    title.textContent =
+      "🧩 能力分解";
+
+    const note =
+      document.createElement("div");
+    note.className =
+      "training-ability-map-note";
+    note.textContent =
+      "这里把训练过程中的作答证据转换成具体环节的掌握情况。它是训练证据层，不会直接替代上面的六阶段能力状态。";
+
+    wrapper.appendChild(title);
+    wrapper.appendChild(note);
+
+    definitions.forEach(function (definition) {
+      const result =
+        getTrainingEvidenceAbilityState(
+          point,
+          definition.key,
+          trainingHistory
+        );
+
+      const row =
+        document.createElement("div");
+      row.className = "training-skill-row";
+
+      const name =
+        document.createElement("div");
+      name.className = "training-skill-name";
+      name.textContent = definition.label;
+
+      const detail =
+        document.createElement("div");
+      detail.className =
+        "training-skill-detail";
+
+      if (result.sessions === 0) {
+        detail.textContent =
+          "尚未在针对性训练中单独验证。";
+      } else {
+        detail.textContent =
+          "训练 " + result.sessions + " 轮" +
+          " ｜ 首次独立答对 " +
+          result.independentPasses + " 轮" +
+          (result.promptedSessions > 0
+            ? " ｜ 曾拆小 " +
+              result.promptedSessions + " 轮"
+            : "");
+      }
+
+      const status =
+        document.createElement("div");
+      status.className =
+        "training-skill-status";
+      status.textContent =
+        result.stateText;
+
+      row.appendChild(name);
+      row.appendChild(detail);
+      row.appendChild(status);
+      wrapper.appendChild(row);
+    });
+
+    return wrapper;
+  }
+
   function renderTrainingEvidence(point, trainingHistory) {
     const wrapper = document.createElement("div");
     wrapper.className = "training-evidence";
@@ -3747,6 +4142,16 @@
           trainingHistory
         )
       );
+
+      const abilityMap =
+        renderTrainingAbilityMap(
+          point,
+          trainingHistory
+        );
+
+      if (abilityMap) {
+        item.appendChild(abilityMap);
+      }
 
       const shouldShowTrainingButton =
         stats.state === "not_mastered" ||
