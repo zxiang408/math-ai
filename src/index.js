@@ -1,4 +1,4 @@
-const APP_VERSION = "V0.4.3";
+const APP_VERSION = "V0.4.4";
 
 const JSON_HEADERS = {
   "Content-Type": "application/json; charset=UTF-8",
@@ -345,23 +345,18 @@ async function requestStructuredJson(env, prompt, functionName, properties, requ
           },
           temperature: 0.2,
           max_tokens: 1200,
-          tools: [
-            {
-              type: "function",
-              function: {
-                name: functionName,
-                description: "Return the requested structured result.",
-                parameters: {
-                  type: "object",
-                  properties,
-                  required,
-                },
+          response_format: {
+            type: "json_schema",
+            json_schema: {
+              name: functionName,
+              strict: true,
+              schema: {
+                type: "object",
+                properties,
+                required,
+                additionalProperties: false,
               },
             },
-          ],
-          tool_choice: {
-            type: "function",
-            function: { name: functionName },
           },
           messages: [
             {
