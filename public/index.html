@@ -410,6 +410,19 @@
       font-weight: 600;
     }
 
+    .cloud-sync-detail {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      margin-top: 12px;
+    }
+
+    .cloud-sync-status {
+      font-weight: 600;
+    }
+
     .retention-queue-item {
       margin-top: 10px;
       padding: 14px;
@@ -819,18 +832,34 @@
 
     <div class="notice">
 
-      当前是 V0.22.0。
+      当前是 V0.23.0。
       <br>
       已加入可开关的 Mock AI 开发测试模式；默认不调用外部 AI，可继续验证错题库、能力档案、针对性训练、分步骤辅导与复测闭环。
       <br>
       真实 AI 模式仍保留 Groq → OpenRouter 路由。
       <br>
-      当前已支持基础错题库、知识点标准化统计、能力档案、复测、针对性训练、分步骤互动辅导，以及长期保持模型；V0.22 进一步加入到期复习队列，并在保持复测失败后重启 3→7→14→30… 的保持周期；V0.11 建立知识结构图；V0.12 让前置知识证据参与训练路径；V0.13 进行全局训练调度；V0.14 建立训练→复测→长期保持闭环；V0.15 接入 AI 个性化辅导；V0.16 建立统一数学验证引擎；V0.17 建立统一学习数据模型与旧数据兼容层。
+      当前已支持基础错题库、知识点标准化统计、能力档案、复测、针对性训练、分步骤互动辅导，以及长期保持模型；V0.23 开始把统一学习事件同步到 Supabase 云端档案，并保留 LocalStorage 离线缓存；V0.22 加入到期复习队列，并在保持复测失败后重启 3→7→14→30… 的保持周期；V0.11 建立知识结构图；V0.12 让前置知识证据参与训练路径；V0.13 进行全局训练调度；V0.14 建立训练→复测→长期保持闭环；V0.15 接入 AI 个性化辅导；V0.16 建立统一数学验证引擎；V0.17 建立统一学习数据模型与旧数据兼容层。
 
     </div>
 
   </div>
 
+
+  <!-- 云端学习档案 -->
+  <div class="card" id="cloudSyncCard">
+    <h2>☁️ 云端学习档案</h2>
+    <div class="subtitle">
+      LocalStorage 继续作为离线缓存；配置 Supabase 后，学习证据会自动同步到云端，并可从云端恢复。
+    </div>
+    <div class="cloud-sync-detail">
+      <div class="cloud-sync-status" id="cloudSyncStatus">
+        正在检查云端档案……
+      </div>
+      <button class="secondary" id="cloudSyncButton" type="button">
+        ☁️ 立即同步
+      </button>
+    </div>
+  </div>
 
   <!-- 孩子能力档案 -->
   <div class="card" id="abilityCard">
@@ -2401,6 +2430,13 @@ window.MathAILearningModel = {
   const knowledgeGraph =
     document.getElementById("knowledgeGraph");
 
+  const cloudSyncStatus =
+    document.getElementById("cloudSyncStatus");
+
+  const cloudSyncButton =
+    document.getElementById("cloudSyncButton");
+
+
   const retentionQueueSummary =
     document.getElementById("retentionQueueSummary");
 
@@ -3340,6 +3376,7 @@ window.MathAILearningModel = {
         RETEST_KEY,
         JSON.stringify(records.slice(0, 200))
       );
+      scheduleCloudPush();
       return true;
     } catch (error) {
       console.error("保存复测记录失败：", error);
@@ -5898,6 +5935,7 @@ window.MathAILearningModel = {
         TRAINING_KEY,
         JSON.stringify(history.slice(0, 200))
       );
+      scheduleCloudPush();
       return true;
     } catch (error) {
       console.error("保存训练记录失败：", error);
@@ -7335,6 +7373,345 @@ window.MathAILearningModel = {
     }
   );
 
+  const CLOUD_SYNC_VERSION = "V0.23.0";
+  let cloudSyncConfigured = false;
+  let cloudSyncBusy = false;
+  let cloudSyncQueued = false;
+  let cloudSyncInitialized = false;
+
+  function setCloudSyncStatus(textValue) {
+    if (cloudSyncStatus) {
+      cloudSyncStatus.textContent = textValue;
+    }
+  }
+
+  function cloudSyncRequest(path, options) {
+    return fetch(path, {
+      ...(options || {}),
+      headers: {
+        "Content-Type": "application/json",
+        ...((options && options.headers) || {})
+      }
+    }).then(async function (response) {
+      let data = {};
+      try {
+        data = await response.json();
+      } catch (_) {}
+
+      if (!response.ok) {
+        const error = new Error(
+          data.error || "云端学习档案请求失败。"
+        );
+        error.code = data.code || "CLOUD_SYNC_FAILED";
+        error.status = response.status;
+        throw error;
+      }
+
+      return data;
+    });
+  }
+
+  function getAllLocalLearningRecords() {
+    return [
+      ...loadHistory(),
+      ...loadRetestHistory(),
+      ...loadTrainingHistory()
+    ];
+  }
+
+  function recordIdentity(record) {
+    return String(record?.id || "").trim();
+  }
+
+  function recordOccurredAt(record) {
+    return String(record?.created_at || "").trim();
+  }
+
+  function mergeRecords(localRecords, cloudRecords) {
+    const map = new Map();
+
+    (Array.isArray(localRecords) ? localRecords : []).forEach(function (record) {
+      const id = recordIdentity(record);
+      if (id) {
+        map.set(id, record);
+      }
+    });
+
+    (Array.isArray(cloudRecords) ? cloudRecords : []).forEach(function (record) {
+      const id = recordIdentity(record);
+      if (!id) {
+        return;
+      }
+
+      const existing = map.get(id);
+      if (!existing) {
+        map.set(id, record);
+        return;
+      }
+
+      const existingAt = new Date(recordOccurredAt(existing) || 0).getTime();
+      const cloudAt = new Date(recordOccurredAt(record) || 0).getTime();
+
+      if (
+        Number.isNaN(existingAt) ||
+        (!Number.isNaN(cloudAt) && cloudAt > existingAt)
+      ) {
+        map.set(id, record);
+      }
+    });
+
+    return Array.from(map.values()).sort(function (a, b) {
+      return new Date(b.created_at || 0) - new Date(a.created_at || 0);
+    });
+  }
+
+  function splitCloudRawRecords(records) {
+    const buckets = {
+      mistake: [],
+      retest: [],
+      training: []
+    };
+
+    (Array.isArray(records) ? records : []).forEach(function (record) {
+      const source = String(record?.source || "").trim();
+      if (source === "mistake") {
+        buckets.mistake.push(record.raw_payload || {});
+      } else if (source === "retest") {
+        buckets.retest.push(record.raw_payload || {});
+      } else if (source === "training") {
+        buckets.training.push(record.raw_payload || {});
+      }
+    });
+
+    return buckets;
+  }
+
+  function applyCloudRecordsToLocalStorage(events) {
+    const buckets = splitCloudRawRecords(events);
+
+    const mergedMistakes = mergeRecords(
+      loadHistory(),
+      buckets.mistake
+    ).filter(function (record) {
+      return record && record.question !== undefined;
+    }).slice(0, 100);
+
+    const mergedRetests = mergeRecords(
+      loadRetestHistory(),
+      buckets.retest
+    ).slice(0, 200);
+
+    const mergedTraining = mergeRecords(
+      loadTrainingHistory(),
+      buckets.training
+    ).slice(0, 200);
+
+    saveHistory(mergedMistakes);
+    saveRetestHistory(mergedRetests);
+    localStorage.setItem(
+      TRAINING_KEY,
+      JSON.stringify(mergedTraining)
+    );
+  }
+
+  function buildCloudArchiveEvents() {
+    const snapshot = {
+      mistakes: loadHistory(),
+      retests: loadRetestHistory(),
+      training: loadTrainingHistory()
+    };
+
+    const model = buildCurrentUnifiedLearningModel(snapshot);
+    const rawMap = new Map();
+
+    getAllLocalLearningRecords().forEach(function (record) {
+      const id = recordIdentity(record);
+      if (id) {
+        rawMap.set(id, record);
+      }
+    });
+
+    return model.events.map(function (event) {
+      const raw = rawMap.get(
+        String(event.event_id || "").trim()
+      ) || {};
+
+      return {
+        event_id: event.event_id,
+        occurred_at: event.occurred_at,
+        source: event.source,
+        event_type: event.event_type,
+        schema_version: event.schema_version,
+        raw_payload: raw,
+        normalized_event: event
+      };
+    }).filter(function (event) {
+      return Boolean(event.event_id);
+    });
+  }
+
+  async function pushLocalLearningArchive() {
+    if (!cloudSyncConfigured) {
+      return { synced: 0 };
+    }
+
+    const events = buildCloudArchiveEvents();
+
+    if (events.length === 0) {
+      setCloudSyncStatus("☁️ 已连接云端，目前没有需要同步的学习记录。");
+      return { synced: 0 };
+    }
+
+    let total = 0;
+
+    for (let start = 0; start < events.length; start += 250) {
+      const batch = events.slice(start, start + 250);
+      const result = await cloudSyncRequest(
+        "/api/sync/push",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            version: CLOUD_SYNC_VERSION,
+            events: batch
+          })
+        }
+      );
+      total += Number(result.synced || 0);
+    }
+
+    return { synced: total };
+  }
+
+  function scheduleCloudPush() {
+    if (!cloudSyncConfigured) {
+      return;
+    }
+
+    cloudSyncQueued = true;
+
+    if (cloudSyncBusy) {
+      return;
+    }
+
+    cloudSyncBusy = true;
+
+    Promise.resolve().then(async function () {
+      while (cloudSyncQueued) {
+        cloudSyncQueued = false;
+        try {
+          setCloudSyncStatus("☁️ 正在同步学习档案……");
+          await pushLocalLearningArchive();
+          setCloudSyncStatus("☁️ 云端档案已同步");
+        } catch (error) {
+          console.error("自动云端同步失败：", error);
+          setCloudSyncStatus(
+            "☁️ 同步失败，数据仍保留在本地：" +
+            (error.message || "")
+          );
+        }
+      }
+    }).finally(function () {
+      cloudSyncBusy = false;
+    });
+  }
+
+  async function initializeCloudSync() {
+    if (cloudSyncInitialized) {
+      return;
+    }
+
+    cloudSyncInitialized = true;
+    setCloudSyncStatus("☁️ 正在检查云端档案……");
+
+    try {
+      const status = await cloudSyncRequest(
+        "/api/sync/status"
+      );
+
+      cloudSyncConfigured =
+        status.configured === true;
+
+      if (!cloudSyncConfigured) {
+        setCloudSyncStatus(
+          "☁️ 尚未配置 Supabase；当前继续使用本地学习档案。"
+        );
+        return;
+      }
+
+      const result = await cloudSyncRequest(
+        "/api/sync/pull"
+      );
+
+      if (Array.isArray(result.events)) {
+        applyCloudRecordsToLocalStorage(result.events);
+        renderHistory();
+      }
+
+      const localCount = buildCloudArchiveEvents().length;
+      if (localCount > 0) {
+        await pushLocalLearningArchive();
+        setCloudSyncStatus(
+          "☁️ 云端学习档案已连接并同步（" +
+          localCount +
+          " 条事件）"
+        );
+      } else {
+        setCloudSyncStatus(
+          "☁️ 云端学习档案已连接，目前没有学习事件。"
+        );
+      }
+    } catch (error) {
+      console.error("初始化云端学习档案失败：", error);
+      cloudSyncConfigured = false;
+      setCloudSyncStatus(
+        "☁️ 云端暂不可用，已继续使用本地档案：" +
+        (error.message || "")
+      );
+    }
+  }
+
+  async function manualCloudSync() {
+    if (cloudSyncBusy) {
+      return;
+    }
+
+    try {
+      setCloudSyncStatus("☁️ 正在同步学习档案……");
+      const status = await cloudSyncRequest("/api/sync/status");
+      if (!status.configured) {
+        cloudSyncConfigured = false;
+        setCloudSyncStatus(
+          "☁️ 尚未配置 Supabase；请先配置 Worker 的 Supabase 环境变量。"
+        );
+        return;
+      }
+
+      cloudSyncConfigured = true;
+      const result = await cloudSyncRequest("/api/sync/pull");
+
+      if (Array.isArray(result.events)) {
+        applyCloudRecordsToLocalStorage(result.events);
+        renderHistory();
+      }
+
+      const pushed = await pushLocalLearningArchive();
+      setCloudSyncStatus(
+        "☁️ 同步完成 · 本地事件 " +
+        buildCloudArchiveEvents().length +
+        " 条 · 本次写入 " +
+        Number(pushed.synced || 0) +
+        " 条"
+      );
+    } catch (error) {
+      console.error("手动云端同步失败：", error);
+      setCloudSyncStatus(
+        "☁️ 同步失败：" +
+        (error.message || "未知错误") +
+        "；本地档案未受影响。"
+      );
+    }
+  }
+
   function loadHistory() {
     try {
       const raw = localStorage.getItem(HISTORY_KEY);
@@ -7442,6 +7819,7 @@ window.MathAILearningModel = {
         JSON.stringify(history)
       );
 
+      scheduleCloudPush();
       return true;
     } catch (error) {
       console.error("保存错题库失败：", error);
@@ -9452,6 +9830,15 @@ window.MathAILearningModel = {
       retestCard.style.display = "none";
 
       renderHistory();
+
+  if (cloudSyncButton) {
+    cloudSyncButton.addEventListener(
+      "click",
+      manualCloudSync
+    );
+  }
+
+  initializeCloudSync();
       updateMockModeUI();
 
       status.textContent =
