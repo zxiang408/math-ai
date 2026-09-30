@@ -1434,47 +1434,66 @@ confidence 为 0 到 1 之间的小数，表示你对整道题识别与分析的
     temperature: 0.2,
     max_tokens: 1800,
     reasoning: { enabled: false },
-    tools: [
-      {
-        type: "function",
-        function: {
-          name: "analyze_math_problem",
-          description: "Return the structured analysis of the uploaded primary-school math problem.",
-          parameters: {
-            type: "object",
-            properties: {
-              question: { type: "string", description: "题目原文或尽可能准确的识别结果" },
-              student_answer: { type: "string", description: "孩子写出的答案；无法确认时写无法确认" },
-              correct_answer: { type: "string", description: "正确答案；无法可靠计算或确认时写无法确认" },
-              knowledge_points: {
-                type: "array",
-                items: { type: "string" },
-                description: "主要小学数学知识点"
-              },
-              error_type: { type: "string", description: "错误类型，只能从指定类型中选一个" },
-              error_nature: { type: "string", description: "错误性质，只能是偶然失误、知识理解不足或无法判断" },
-              analysis: { type: "string", description: "简明说明错误原因、应检查什么以及判断错误性质的依据" },
-              confidence: { type: "number", description: "0到1之间的识别与分析把握度" },
-              unclear: { type: "boolean", description: "图片是否存在影响可靠分析的模糊内容" }
+    response_format: {
+      type: "json_schema",
+      json_schema: {
+        name: "analyze_math_problem",
+        strict: true,
+        schema: {
+          type: "object",
+          properties: {
+            question: {
+              type: "string",
+              description: "题目原文或尽可能准确的识别结果",
             },
-            required: [
-              "question",
-              "student_answer",
-              "correct_answer",
-              "knowledge_points",
-              "error_type",
-              "error_nature",
-              "analysis",
-              "confidence",
-              "unclear"
-            ]
-          }
-        }
-      }
-    ],
-    tool_choice: {
-      type: "function",
-      function: { name: "analyze_math_problem" }
+            student_answer: {
+              type: "string",
+              description: "孩子写出的答案；无法确认时写无法确认",
+            },
+            correct_answer: {
+              type: "string",
+              description: "正确答案；无法可靠计算或确认时写无法确认",
+            },
+            knowledge_points: {
+              type: "array",
+              items: { type: "string" },
+              description: "主要小学数学知识点",
+            },
+            error_type: {
+              type: "string",
+              description: "错误类型，只能从指定类型中选一个",
+            },
+            error_nature: {
+              type: "string",
+              description: "错误性质，只能是偶然失误、知识理解不足或无法判断",
+            },
+            analysis: {
+              type: "string",
+              description: "简明说明错误原因、应检查什么以及判断错误性质的依据",
+            },
+            confidence: {
+              type: "number",
+              description: "0到1之间的识别与分析把握度",
+            },
+            unclear: {
+              type: "boolean",
+              description: "图片是否存在影响可靠分析的模糊内容",
+            },
+          },
+          required: [
+            "question",
+            "student_answer",
+            "correct_answer",
+            "knowledge_points",
+            "error_type",
+            "error_nature",
+            "analysis",
+            "confidence",
+            "unclear",
+          ],
+          additionalProperties: false,
+        },
+      },
     },
     messages: [
       {
@@ -1489,7 +1508,6 @@ confidence 为 0 到 1 之间的小数，表示你对整道题识别与分析的
       },
     ],
   };
-
   for (const provider of providers) {
     const result = await fetchAIProvider(
       provider,
