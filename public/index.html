@@ -165,6 +165,37 @@
       line-height: 1.6;
     }
 
+    .knowledge-overview {
+      margin-top: 16px;
+      padding: 16px;
+      border-radius: 12px;
+      background: #f8fafc;
+      border: 1px solid #eaecf0;
+    }
+
+    .overview-title {
+      font-weight: bold;
+      margin-bottom: 10px;
+    }
+
+    .overview-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 8px 0;
+      border-bottom: 1px solid #eaecf0;
+      line-height: 1.5;
+    }
+
+    .overview-row:last-child {
+      border-bottom: none;
+    }
+
+    .overview-count {
+      color: #475467;
+      white-space: nowrap;
+    }
+
     .history-empty {
       color: #667085;
       padding: 10px 0;
@@ -404,7 +435,7 @@
       <br>
       已接入 OpenRouter 免费模型路由，用于错题照片识别与 AI 分析。
       <br>
-      当前已支持基础错题库；后续再加入知识点标准化、能力档案、针对性出题和分步骤引导。
+      当前已支持基础错题库和知识点标准化统计；后续再加入能力档案、针对性出题和分步骤引导。
 
     </div>
 
@@ -416,6 +447,11 @@
     <h2>📚 我的错题库</h2>
     <div class="subtitle" id="historySummary">
       已保存 0 道错题
+    </div>
+
+    <div id="knowledgeOverview" class="knowledge-overview">
+      <div class="overview-title">📊 知识点概况</div>
+      <div id="knowledgeOverviewList"></div>
     </div>
 
     <div id="historyList"></div>
@@ -467,8 +503,67 @@
   const clearHistoryButton =
     document.getElementById("clearHistoryButton");
 
+  const knowledgeOverview =
+    document.getElementById("knowledgeOverview");
+
+  const knowledgeOverviewList =
+    document.getElementById("knowledgeOverviewList");
+
   const HISTORY_KEY =
     "math-ai-v0.2-mistake-history";
+
+  function standardizeKnowledgePoint(point) {
+    const text = String(point || "")
+      .trim()
+      .replace(/\s+/g, "");
+
+    if (!text) {
+      return "";
+    }
+
+    const rules = [
+      ["图形与几何 / 正方形面积", ["正方形的面积公式", "正方形面积公式", "正方形面积"]],
+      ["图形与几何 / 长方形面积", ["长方形的面积公式", "长方形面积公式", "长方形面积"]],
+      ["数与代数 / 积的变化规律", ["积的变化规律", "乘积的变化规律", "积的倍数变化"]],
+      ["数与代数 / 倍数关系", ["倍数关系", "倍数"]],
+      ["数与代数 / 分数", ["分数概念", "分数的意义", "分数"]],
+      ["数与代数 / 小数", ["小数概念", "小数的意义", "小数"]],
+      ["数与代数 / 四则运算", ["四则运算", "加减乘除", "混合运算"]],
+      ["数与代数 / 运算律", ["运算律", "交换律", "结合律", "分配律"]],
+      ["数与代数 / 比与比例", ["比与比例", "比例", "比的意义"]],
+      ["统计与概率 / 统计", ["统计图", "平均数", "统计"]]
+    ];
+
+    for (const rule of rules) {
+      if (
+        rule[1].some(function (alias) {
+          return text.includes(alias.replace(/\s+/g, ""));
+        })
+      ) {
+        return rule[0];
+      }
+    }
+
+    return "待归类 / " + String(point).trim();
+  }
+
+  function standardizeKnowledgePoints(points) {
+    if (!Array.isArray(points)) {
+      return [];
+    }
+
+    const result = [];
+
+    points.slice(0, 8).forEach(function (point) {
+      const value = standardizeKnowledgePoint(point);
+
+      if (value && !result.includes(value)) {
+        result.push(value);
+      }
+    });
+
+    return result;
+  }
 
   function loadHistory() {
     try {
@@ -480,9 +575,50 @@
 
       const data = JSON.parse(raw);
 
-      return Array.isArray(data)
-        ? data
-        : [];
+      if (!Array.isArray(data)) {
+        return [];
+      }
+
+      let changed = false;
+
+      const normalized = data.map(function (item) {
+        const originalPoints =
+          Array.isArray(item.knowledge_points_raw)
+            ? item.knowledge_points_raw
+            : item.knowledge_points;
+
+        const standardized =
+          standardizeKnowledgePoints(originalPoints);
+
+        if (
+          JSON.stringify(standardized) !==
+          JSON.stringify(item.knowledge_points || [])
+        ) {
+          changed = true;
+        }
+
+        return {
+          ...item,
+          knowledge_points_raw:
+            Array.isArray(originalPoints)
+              ? originalPoints
+              : [],
+          knowledge_points: standardized
+        };
+      });
+
+      if (changed) {
+        try {
+          localStorage.setItem(
+            HISTORY_KEY,
+            JSON.stringify(normalized)
+          );
+        } catch (error) {
+          console.error("迁移旧错题知识点失败：", error);
+        }
+      }
+
+      return normalized;
     } catch (error) {
       console.error("读取错题库失败：", error);
       return [];
@@ -530,8 +666,58 @@
     return tag;
   }
 
+  function renderKnowledgeOverview(history) {
+    const counts = {};
+
+    history.forEach(function (item) {
+      const points = standardizeKnowledgePoints(
+        item.knowledge_points
+      );
+
+      points.forEach(function (point) {
+        counts[point] = (counts[point] || 0) + 1;
+      });
+    });
+
+    const entries = Object.entries(counts)
+      .sort(function (a, b) {
+        if (b[1] !== a[1]) {
+          return b[1] - a[1];
+        }
+
+        return a[0].localeCompare(b[0], "zh-CN");
+      })
+      .slice(0, 10);
+
+    knowledgeOverviewList.textContent = "";
+
+    if (entries.length === 0) {
+      knowledgeOverviewList.textContent =
+        "分析错题后，这里会自动统计孩子出现过的知识点。";
+      return;
+    }
+
+    entries.forEach(function (entry) {
+      const row = document.createElement("div");
+      row.className = "overview-row";
+
+      const name = document.createElement("span");
+      name.textContent = entry[0];
+
+      const count = document.createElement("span");
+      count.className = "overview-count";
+      count.textContent = entry[1] + " 次";
+
+      row.appendChild(name);
+      row.appendChild(count);
+      knowledgeOverviewList.appendChild(row);
+    });
+  }
+
   function renderHistory() {
     const history = loadHistory();
+
+    renderKnowledgeOverview(history);
 
     historySummary.textContent =
       "已保存 " + history.length + " 道错题";
@@ -653,9 +839,12 @@
       question: data.question || "",
       student_answer: data.student_answer || "",
       correct_answer: data.correct_answer || "",
-      knowledge_points: Array.isArray(data.knowledge_points)
+      knowledge_points_raw: Array.isArray(data.knowledge_points)
         ? data.knowledge_points.slice(0, 8)
         : [],
+      knowledge_points: standardizeKnowledgePoints(
+        data.knowledge_points
+      ),
       error_type: data.error_type || "",
       analysis: data.analysis || "",
       confidence:
