@@ -496,7 +496,7 @@
 
     <div class="notice">
 
-      当前是 V0.4.2。
+      当前是 V0.5.0。
       <br>
       已接入 OpenRouter 免费模型路由，用于错题照片识别与 AI 分析。
       <br>
@@ -511,7 +511,7 @@
   <div class="card" id="abilityCard">
     <h2>🧒 孩子数学能力档案</h2>
     <div class="subtitle">
-      根据错题历史自动形成：一次知识性错误先复测，重复出现后再升级判断。
+      根据错题与复测历史自动形成：未掌握 → 学习中 → 初步掌握 → 掌握不稳定 → 恢复中 → 已掌握。
     </div>
 
     <div id="abilityList"></div>
@@ -568,9 +568,9 @@
   </div>
 
   <div class="footer">
-    小学数学 AI · V0.4.2
+    小学数学 AI · V0.5.0
     <br>
-    <span id="appVersion">程序版本：V0.4.2</span>
+    <span id="appVersion">程序版本：V0.5.0</span>
   </div>
 
 </div>
@@ -821,21 +821,118 @@
   }
 
   function getRetestStats(point, records) {
-    const matching = records.filter(function (item) {
-      return standardizeKnowledgePoints(
-        item.knowledge_points
-      ).includes(point);
-    });
+    const matching = records
+      .filter(function (item) {
+        return standardizeKnowledgePoints(
+          item.knowledge_points
+        ).includes(point);
+      })
+      .slice()
+      .sort(function (a, b) {
+        return new Date(a.created_at || 0) - new Date(b.created_at || 0);
+      });
 
     const attempts = matching.length;
     const passes = matching.filter(function (item) {
       return item.passed === true;
     }).length;
 
+    let consecutiveCorrect = 0;
+
+    for (let i = matching.length - 1; i >= 0; i--) {
+      if (matching[i].passed === true) {
+        consecutiveCorrect += 1;
+      } else {
+        break;
+      }
+    }
+
     return {
       attempts: attempts,
       passes: passes,
-      failures: attempts - passes
+      failures: attempts - passes,
+      consecutiveCorrect: consecutiveCorrect,
+      lastAttempt: matching.length > 0
+        ? matching[matching.length - 1]
+        : null,
+      history: matching
+    };
+  }
+
+  function getKnowledgeState(point, history, retestHistory) {
+    const hasOriginalMistake = history.some(function (item) {
+      return standardizeKnowledgePoints(item.knowledge_points).includes(point);
+    });
+
+    if (!hasOriginalMistake) {
+      return {
+        state: "not_mastered",
+        stateText: "未掌握",
+        stats: {
+          attempts: 0,
+          passes: 0,
+          failures: 0,
+          consecutiveCorrect: 0,
+          history: []
+        }
+      };
+    }
+
+    const stats = getRetestStats(point, retestHistory);
+
+    let state = "not_mastered";
+    let previousDate = null;
+
+    stats.history.forEach(function (attempt) {
+      const currentDate = new Date(attempt.created_at || 0);
+      const daysSincePrevious =
+        previousDate && !Number.isNaN(currentDate.getTime())
+          ? (currentDate.getTime() - previousDate.getTime()) / 86400000
+          : null;
+
+      const isCorrect = attempt.passed === true;
+      const isSpaced =
+        attempt.test_type === "spaced_retest" ||
+        (daysSincePrevious !== null && daysSincePrevious >= 3);
+
+      if (state === "not_mastered") {
+        state = isCorrect ? "learning" : "not_mastered";
+      } else if (state === "learning") {
+        state = isCorrect ? "initial_mastery" : "not_mastered";
+      } else if (state === "initial_mastery") {
+        state = isCorrect ? "initial_mastery" : "unstable";
+      } else if (state === "unstable") {
+        state = isCorrect ? "recovering" : "unstable";
+      } else if (state === "recovering") {
+        if (!isCorrect) {
+          state = "unstable";
+        } else if (isSpaced) {
+          state = "mastered";
+        } else {
+          state = "recovering";
+        }
+      } else if (state === "mastered") {
+        state = isCorrect ? "mastered" : "unstable";
+      }
+
+      if (!Number.isNaN(currentDate.getTime())) {
+        previousDate = currentDate;
+      }
+    });
+
+    const stateTextMap = {
+      not_mastered: "未掌握",
+      learning: "学习中",
+      initial_mastery: "初步掌握",
+      unstable: "掌握不稳定",
+      recovering: "恢复中",
+      mastered: "已掌握"
+    };
+
+    return {
+      state: state,
+      stateText: stateTextMap[state] || "未掌握",
+      stats: stats
     };
   }
 
@@ -957,6 +1054,31 @@
           "复测判断失败，请稍后再试。"
         );
       }
+
+      const previousAttempts = loadRetestHistory().filter(function (item) {
+        return standardizeKnowledgePoints(item.knowledge_points).includes(
+          activeRetest.knowledge_point
+        );
+      });
+
+      const previousAttempt = previousAttempts
+        .slice()
+        .sort(function (a, b) {
+          return new Date(b.created_at || 0) - new Date(a.created_at || 0);
+        })[0];
+
+      const previousDate = previousAttempt
+        ? new Date(previousAttempt.created_at)
+        : null;
+
+      const daysSincePrevious = previousDate && !Number.isNaN(previousDate.getTime())
+        ? (Date.now() - previousDate.getTime()) / 86400000
+        : null;
+
+      const testType =
+        daysSincePrevious !== null && daysSincePrevious >= 3
+          ? "spaced_retest"
+          : "retest";
 
       const attempt = {
         id:
@@ -1202,38 +1324,7 @@
   }
 
   function getAbilityStatus(stats) {
-    if (stats.knowledge_errors >= 2) {
-      if (
-        stats.retest_attempts > 0 &&
-        stats.retest_failures === 0
-      ) {
-        return "复测通过，继续巩固";
-      }
-
-      return "反复出现知识性错误";
-    }
-
-    if (stats.knowledge_errors === 1) {
-      if (stats.retest_passes >= 1 && stats.retest_failures === 0) {
-        return "复测通过";
-      }
-
-      if (stats.retest_failures >= 1) {
-        return "复测未通过";
-      }
-
-      return "需要复测";
-    }
-
-    if (stats.retest_attempts > 0) {
-      if (stats.retest_failures === 0) {
-        return "复测通过";
-      }
-
-      return "继续观察";
-    }
-
-    return "待观察";
+    return stats.stateText || "未掌握";
   }
 
   function renderAbilityProfile(history) {
@@ -1251,10 +1342,7 @@
             total: 0,
             knowledge_errors: 0,
             accidental_errors: 0,
-            unknown_errors: 0,
-            retest_attempts: 0,
-            retest_passes: 0,
-            retest_failures: 0
+            unknown_errors: 0
           };
         }
 
@@ -1276,22 +1364,40 @@
     });
 
     Object.keys(statsMap).forEach(function (point) {
-      const retestStats =
-        getRetestStats(
-          point,
-          retestHistory
-        );
+      const knowledgeState =
+        getKnowledgeState(point, history, retestHistory);
 
-      statsMap[point].retest_attempts =
-        retestStats.attempts;
-      statsMap[point].retest_passes =
-        retestStats.passes;
-      statsMap[point].retest_failures =
-        retestStats.failures;
+      const retestStats = knowledgeState.stats;
+
+      statsMap[point].state = knowledgeState.state;
+      statsMap[point].stateText = knowledgeState.stateText;
+      statsMap[point].retest_attempts = retestStats.attempts;
+      statsMap[point].retest_passes = retestStats.passes;
+      statsMap[point].retest_failures = retestStats.failures;
+      statsMap[point].consecutiveCorrect =
+        retestStats.consecutiveCorrect;
+      statsMap[point].lastAttempt =
+        retestStats.lastAttempt;
     });
 
     const entries = Object.entries(statsMap)
       .sort(function (a, b) {
+        const order = {
+          not_mastered: 0,
+          unstable: 1,
+          learning: 2,
+          recovering: 3,
+          initial_mastery: 4,
+          mastered: 5
+        };
+
+        const stateA = order[a[1].state] ?? 99;
+        const stateB = order[b[1].state] ?? 99;
+
+        if (stateA !== stateB) {
+          return stateA - stateB;
+        }
+
         if (b[1].knowledge_errors !== a[1].knowledge_errors) {
           return b[1].knowledge_errors - a[1].knowledge_errors;
         }
@@ -1336,6 +1442,11 @@
         detail.textContent +=
           " ｜ 复测 " + stats.retest_attempts + " 次" +
           " ｜ 通过 " + stats.retest_passes + " 次";
+
+        if (stats.consecutiveCorrect > 0) {
+          detail.textContent +=
+            " ｜ 连续正确 " + stats.consecutiveCorrect + " 次";
+        }
       }
 
       if (stats.unknown_errors > 0) {
@@ -1346,21 +1457,26 @@
       const action = document.createElement("div");
       action.className = "ability-stats";
 
-      if (stats.retest_failures >= 1) {
+      if (stats.state === "not_mastered") {
         action.textContent =
-          "建议：继续训练后再次复测，观察是否重复出错。";
-      } else if (stats.knowledge_errors >= 2) {
+          stats.retest_attempts === 0
+            ? "建议：先进行复测，确认是否真正理解。"
+            : "建议：继续针对性训练，再进行复测。";
+      } else if (stats.state === "learning") {
         action.textContent =
-          "建议：进入针对性训练，并继续复测。";
-      } else if (stats.knowledge_errors === 1) {
+          "建议：继续做同类题，达到下一阶段后再安排巩固。";
+      } else if (stats.state === "initial_mastery") {
         action.textContent =
-          "建议：安排 1～2 道同类题复测，暂不直接认定为薄弱。";
-      } else if (stats.accidental_errors > 0) {
+          "建议：已经连续通过基础复测，进入间隔复测阶段。";
+      } else if (stats.state === "unstable") {
         action.textContent =
-          "建议：继续正常练习，留意是否再次出现同类错误。";
-      } else {
+          "建议：再次训练并复测，观察能否稳定恢复。";
+      } else if (stats.state === "recovering") {
         action.textContent =
-          "建议：继续积累数据。";
+          "建议：继续保持，下一次安排间隔复测。";
+      } else if (stats.state === "mastered") {
+        action.textContent =
+          "建议：已通过间隔复测，后续只需定期抽查。";
       }
 
       const status = document.createElement("div");
@@ -1371,17 +1487,58 @@
       item.appendChild(detail);
       item.appendChild(action);
 
-      if (stats.knowledge_errors >= 1) {
+      const shouldShowRetestButton =
+        stats.state !== "mastered" &&
+        (
+          stats.knowledge_errors >= 1 ||
+          stats.retest_attempts >= 1
+        );
+
+      if (shouldShowRetestButton) {
         const retestButton =
           document.createElement("button");
         retestButton.className = "secondary";
-        retestButton.textContent = "生成复测题";
-        retestButton.addEventListener(
-          "click",
-          function () {
-            showRetestPanel(point);
-          }
-        );
+
+        const lastAttemptDate = stats.lastAttempt
+          ? new Date(stats.lastAttempt.created_at)
+          : null;
+
+        const daysSinceLast =
+          lastAttemptDate && !Number.isNaN(lastAttemptDate.getTime())
+            ? (Date.now() - lastAttemptDate.getTime()) / 86400000
+            : null;
+
+        if (
+          stats.state === "initial_mastery" &&
+          daysSinceLast !== null &&
+          daysSinceLast < 3
+        ) {
+          retestButton.textContent =
+            "间隔复测未到时间";
+          retestButton.disabled = true;
+          retestButton.title =
+            "初步掌握后至少间隔 3 天再复测";
+        } else if (
+          stats.state === "initial_mastery" ||
+          stats.state === "recovering"
+        ) {
+          retestButton.textContent =
+            "生成间隔复测题";
+          retestButton.addEventListener(
+            "click",
+            function () {
+              showRetestPanel(point);
+            }
+          );
+        } else {
+          retestButton.textContent = "生成复测题";
+          retestButton.addEventListener(
+            "click",
+            function () {
+              showRetestPanel(point);
+            }
+          );
+        }
 
         const buttonWrap =
           document.createElement("div");
@@ -1391,7 +1548,6 @@
       }
 
       item.appendChild(status);
-
       abilityList.appendChild(item);
     });
   }
@@ -1797,112 +1953,3 @@
       data.correct_answer || "无法确认";
 
     renderKnowledgePoints(data.knowledge_points);
-
-    document.getElementById("errorType").textContent =
-      (data.error_type || "无法判断") +
-      " ｜ " +
-      (data.error_nature || "错误性质无法判断");
-
-    document.getElementById("analysis").textContent =
-      data.analysis || "暂无分析结果";
-
-    resultCard.style.display = "block";
-  }
-
-
-  // 调用 Cloudflare Worker 后端
-  analyzeButton.addEventListener("click", async function () {
-    if (!selectedFile) {
-      status.textContent = "请先选择一张错题照片。";
-      return;
-    }
-
-    status.textContent = "正在上传图片并进行 AI 分析……";
-    analyzeButton.disabled = true;
-    clearButton.disabled = true;
-    resultCard.style.display = "none";
-
-    try {
-      const dataUrl = await fileToDataUrl(selectedFile);
-
-      const response = await fetch("/api/analyze", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          image: dataUrl,
-          mimeType: "image/jpeg"
-        })
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        let message = data.error || "AI 分析失败，请稍后再试。";
-
-        if (data.upstream_status) {
-          message += "（HTTP " + data.upstream_status + "）";
-        }
-
-        if (data.upstream_code) {
-          message += "；错误代码：" + data.upstream_code;
-        }
-
-        if (data.upstream_metadata) {
-          try {
-            message += "；Provider 信息：" +
-              JSON.stringify(data.upstream_metadata);
-          } catch (_) {}
-        }
-
-        if (data.raw_preview) {
-          message += "；返回内容：" + data.raw_preview;
-        }
-
-        throw new Error(message);
-      }
-
-      renderResult(data);
-
-      const saved =
-        saveMistakeRecord(data);
-
-      renderHistory();
-
-      if (!saved) {
-        status.textContent =
-          "AI 分析完成，但错题保存失败，请检查浏览器存储空间。";
-      }
-
-      const confidenceText =
-        typeof data.confidence === "number"
-          ? `（识别把握度 ${Math.round(data.confidence * 100)}%）`
-          : "";
-
-      status.textContent =
-        data.unclear
-          ? "分析完成，但照片中有内容不够清晰，请核对结果。" + confidenceText
-          : "AI 分析完成。" + confidenceText;
-
-    } catch (error) {
-      console.error(error);
-      status.textContent =
-        "分析失败：" + (error.message || "未知错误");
-    } finally {
-      analyzeButton.disabled = false;
-      clearButton.disabled = false;
-    }
-  });
-
-
-  // 清空时同步清理已选择的文件
-  clearButton.addEventListener("click", function () {
-    selectedFile = null;
-  });
-
-
-</script>
-
-</body>
-</html>
