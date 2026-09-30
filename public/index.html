@@ -3283,6 +3283,48 @@ window.MathAILearningModel = {
     );
   }
 
+  /*
+   * V0.17 training micro-skill definitions
+   * 说明：
+   * 这些定义只描述“一个知识点要观察哪些具体环节”。
+   * 真实状态仍由训练过程中的作答证据计算，不在这里直接判断掌握。
+   */
+  function getTrainingAbilityDefinitions(point) {
+    const definitions = {
+      "数与代数 / 倍数关系": [
+        { key: "large_number_parts", label: "倍数 → 份数" },
+        { key: "total_parts", label: "总份数" },
+        { key: "unit_value", label: "总和 ÷ 总份数" }
+      ],
+      "图形与几何 / 正方形面积": [
+        { key: "side_scale", label: "边长变化倍数" },
+        { key: "area_scale_or_calculation", label: "面积变化 / 计算" }
+      ],
+      "数与代数 / 积的变化规律": [
+        { key: "unchanged_factor", label: "识别不变因数" },
+        { key: "combined_factor_change", label: "合并两个因数的变化" }
+      ],
+      "数与代数 / 四则运算": [
+        { key: "multiplication_first", label: "先算乘法" },
+        { key: "subtraction_after_multiplication", label: "再算减法" }
+      ],
+      "数与代数 / 小数": [
+        { key: "decimal_alignment", label: "小数点对齐" },
+        { key: "decimal_calculation", label: "小数计算" }
+      ]
+    };
+
+    const rows = definitions[String(point || "").trim()];
+    return Array.isArray(rows)
+      ? rows.map(function (item) {
+          return {
+            key: item.key,
+            label: item.label
+          };
+        })
+      : [];
+  }
+
   function getTrainingEvidenceFocus(point) {
     const records = loadTrainingHistory()
       .filter(function (item) {
