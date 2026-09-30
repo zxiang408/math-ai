@@ -1563,7 +1563,10 @@
         buttonWrap.className = "history-actions";
         buttonWrap.appendChild(retestButton);
 
-        if (stats.state === "initial_mastery") {
+        if (
+          stats.state === "initial_mastery" ||
+          stats.state === "recovering"
+        ) {
           const testButton =
             document.createElement("button");
           testButton.className = "secondary";
