@@ -496,7 +496,7 @@
 
     <div class="notice">
 
-      当前是 V0.5.2。
+      当前是 V0.6.0。
       <br>
       已接入 OpenRouter 免费模型路由，用于错题照片识别与 AI 分析。
       <br>
@@ -515,6 +515,34 @@
     </div>
 
     <div id="abilityList"></div>
+  </div>
+
+  <!-- 针对性训练 -->
+  <div class="card" id="trainingCard" style="display: none;">
+    <h2>🎯 针对性训练</h2>
+    <div class="subtitle" id="trainingFocus"></div>
+    <div class="status" id="trainingStatus"></div>
+
+    <div class="retest-question" id="trainingQuestion"></div>
+
+    <input
+      class="retest-answer-input"
+      id="trainingAnswer"
+      type="text"
+      placeholder="请输入孩子的答案"
+      autocomplete="off"
+    >
+
+    <div class="button-row">
+      <button class="primary" id="submitTrainingButton">
+        提交答案
+      </button>
+      <button class="secondary" id="closeTrainingButton">
+        关闭
+      </button>
+    </div>
+
+    <div class="retest-result" id="trainingResult" style="display: none;"></div>
   </div>
 
   <!-- 复测题 -->
@@ -568,9 +596,9 @@
   </div>
 
   <div class="footer">
-    小学数学 AI · V0.5.2
+    小学数学 AI · V0.6.0
     <br>
-    <span id="appVersion">程序版本：V0.5.2</span>
+    <span id="appVersion">程序版本：V0.6.0</span>
   </div>
 
 </div>
@@ -641,6 +669,33 @@
 
   const retestResult =
     document.getElementById("retestResult");
+
+  const trainingCard =
+    document.getElementById("trainingCard");
+
+  const trainingFocus =
+    document.getElementById("trainingFocus");
+
+  const trainingStatus =
+    document.getElementById("trainingStatus");
+
+  const trainingQuestion =
+    document.getElementById("trainingQuestion");
+
+  const trainingAnswer =
+    document.getElementById("trainingAnswer");
+
+  const submitTrainingButton =
+    document.getElementById("submitTrainingButton");
+
+  const closeTrainingButton =
+    document.getElementById("closeTrainingButton");
+
+  const trainingResult =
+    document.getElementById("trainingResult");
+
+  const TRAINING_KEY =
+    "math-ai-v0.6-training-history";
 
   const RETEST_KEY =
     "math-ai-v0.4-retest-history";
@@ -1103,6 +1158,298 @@
     };
   }
 
+  function getTrainingFocus(point, history, state) {
+    const matching = history
+      .filter(function (item) {
+        return standardizeKnowledgePoints(
+          item.knowledge_points
+        ).includes(point);
+      })
+      .slice()
+      .sort(function (a, b) {
+        return new Date(b.created_at || 0) -
+          new Date(a.created_at || 0);
+      });
+
+    const latest = matching[0] || null;
+    const errorType = latest
+      ? standardizeErrorType(latest.error_type)
+      : "无法判断";
+
+    if (state === "unstable") {
+      return {
+        title: "稳定性变式训练",
+        reason: "这个知识点最近一次已经出现复测错误，本轮重点检查能否把方法迁移到新题。",
+        errorType: errorType
+      };
+    }
+
+    if (state === "recovering") {
+      return {
+        title: "恢复巩固训练",
+        reason: "这个知识点正在恢复中，先做一道熟悉结构的题，再进入间隔复测。",
+        errorType: errorType
+      };
+    }
+
+    if (
+      errorType === "概念理解错误" ||
+      errorType === "方法/步骤错误"
+    ) {
+      return {
+        title: "概念与方法训练",
+        reason: "根据历史错误，这次训练优先检查概念/方法是否真正理解。",
+        errorType: errorType
+      };
+    }
+
+    if (
+      errorType === "计算错误" ||
+      errorType === "抄写/书写错误" ||
+      errorType === "粗心/注意力错误"
+    ) {
+      return {
+        title: "易错点巩固训练",
+        reason: "根据历史错误，这次训练重点检查计算与书写准确性。",
+        errorType: errorType
+      };
+    }
+
+    return {
+      title: "基础巩固训练",
+      reason: "先用一道同知识点新题检查基础掌握情况。",
+      errorType: errorType
+    };
+  }
+
+  function generateTargetedTraining(point, focus) {
+    function randInt(min, max) {
+      return Math.floor(Math.random() * (max - min + 1)) + min;
+    }
+
+    const focusTitle = focus && focus.title
+      ? focus.title
+      : "基础巩固训练";
+
+    if (point === "图形与几何 / 正方形面积") {
+      if (focusTitle === "概念与方法训练") {
+        const side = randInt(4, 10);
+        return {
+          question:
+            "一个正方形的边长是" + side +
+            "厘米。如果只把边长扩大2倍，面积扩大多少倍？",
+          correct_answer: "4倍",
+          explanation:
+            "正方形面积与边长的平方有关。边长扩大2倍，面积扩大2×2=4倍。"
+        };
+      }
+
+      if (focusTitle === "稳定性变式训练") {
+        const side = randInt(5, 9);
+        const newSide = side * 2;
+        return {
+          question:
+            "一个正方形边长是" + side +
+            "厘米，边长扩大2倍后，新的面积是多少平方厘米？",
+          correct_answer: String(newSide * newSide) + "平方厘米",
+          explanation:
+            "先求新边长：" + side + "×2=" + newSide +
+            "厘米，再求面积：" + newSide + "×" + newSide +
+            "=" + (newSide * newSide) + "平方厘米。"
+        };
+      }
+
+      const side = randInt(3, 12);
+      return {
+        question:
+          "一个正方形的边长是" + side +
+          "厘米，这个正方形的面积是多少平方厘米？",
+        correct_answer: String(side * side) + "平方厘米",
+        explanation:
+          "正方形的面积等于边长乘边长，" +
+          side + "×" + side + "=" + (side * side) + "。"
+      };
+    }
+
+    if (point === "数与代数 / 倍数关系") {
+      const multiple = randInt(3, 6);
+      const small = randInt(6, 12);
+      const large = small * multiple;
+      const sum = small + large;
+
+      if (focusTitle === "概念与方法训练") {
+        return {
+          question:
+            "一个数是另一个数的" + multiple +
+            "倍。如果两个数的和是" + sum +
+            "，较小的数是多少？",
+          correct_answer: String(small),
+          explanation:
+            "把较小的数看成1份，较大的数就是" + multiple +
+            "份，一共" + (multiple + 1) +
+            "份，所以较小的数是" + sum + "÷" +
+            (multiple + 1) + "=" + small + "。"
+        };
+      }
+
+      if (focusTitle === "稳定性变式训练") {
+        return {
+          question:
+            "甲数是乙数的" + multiple + "倍。甲数比乙数多" +
+            (large - small) + "。乙数是多少？",
+          correct_answer: String(small),
+          explanation:
+            "甲比乙多" + (multiple - 1) +
+            "份，所以乙数是" + (large - small) +
+            "÷" + (multiple - 1) + "=" + small + "。"
+        };
+      }
+
+      return {
+        question:
+          "一个数是另一个数的" + multiple +
+          "倍。如果两个数的和是" + sum +
+          "，较小的数是多少？",
+        correct_answer: String(small),
+        explanation:
+          "两个数一共是" + (multiple + 1) +
+          "份，较小数为" + sum + "÷" +
+          (multiple + 1) + "=" + small + "。"
+      };
+    }
+
+    if (point === "数与代数 / 积的变化规律") {
+      const factor = randInt(2, 6);
+      const shrink = randInt(2, 4);
+
+      if (focusTitle === "稳定性变式训练") {
+        return {
+          question:
+            "一个因数扩大" + factor +
+            "倍，另一个因数缩小" + factor +
+            "倍，积怎样变化？",
+          correct_answer: "不变",
+          explanation:
+            "一个因数扩大" + factor +
+            "倍，另一个因数缩小相同倍数，两种变化互相抵消，积不变。"
+        };
+      }
+
+      return {
+        question:
+          "一个因数扩大" + factor +
+          "倍，另一个因数不变，积扩大多少倍？",
+        correct_answer: String(factor) + "倍",
+        explanation:
+          "一个因数不变，另一个因数扩大" + factor +
+          "倍，积也扩大" + factor + "倍。"
+      };
+    }
+
+    if (point === "数与代数 / 四则运算") {
+      const a = randInt(20, 80);
+      const b = randInt(2, 9);
+      const c = randInt(2, 8);
+      return {
+        question: "计算：" + a + "－" + b + "×" + c + "＝？",
+        correct_answer: String(a - b * c),
+        explanation:
+          "先算乘法：" + b + "×" + c +
+          "=" + (b * c) + "，再算减法。"
+      };
+    }
+
+    if (point === "数与代数 / 小数") {
+      const a = (randInt(10, 45) / 10).toFixed(1);
+      const b = (randInt(10, 35) / 10).toFixed(1);
+      const result = (Number(a) - Number(b))
+        .toFixed(1)
+        .replace(/\.0$/, "");
+      return {
+        question: "计算：" + a + "－" + b + "＝？",
+        correct_answer: result,
+        explanation:
+          "把小数点对齐后相减，结果是" + result + "。"
+      };
+    }
+
+    return null;
+  }
+
+  function showTrainingPanel(point, history, stats) {
+    const focus = getTrainingFocus(
+      point,
+      history,
+      stats.state
+    );
+    const training = generateTargetedTraining(
+      point,
+      focus
+    );
+
+    if (!training) {
+      trainingCard.style.display = "none";
+      return;
+    }
+
+    activeTraining = {
+      knowledge_point: point,
+      focus: focus,
+      question: training.question,
+      correct_answer: training.correct_answer,
+      explanation: training.explanation || ""
+    };
+
+    trainingCard.style.display = "block";
+    trainingFocus.textContent =
+      focus.title + " ｜ " + focus.reason;
+    trainingStatus.textContent =
+      "题目已生成，请让孩子独立完成。";
+    trainingQuestion.textContent =
+      training.question;
+    trainingAnswer.value = "";
+    trainingAnswer.disabled = false;
+    submitTrainingButton.disabled = false;
+    trainingResult.style.display = "none";
+
+    trainingCard.scrollIntoView({
+      behavior: "smooth",
+      block: "start"
+    });
+
+    trainingAnswer.focus();
+  }
+
+  function loadTrainingHistory() {
+    try {
+      const raw = localStorage.getItem(TRAINING_KEY);
+      if (!raw) return [];
+
+      const data = JSON.parse(raw);
+      return Array.isArray(data) ? data : [];
+    } catch (error) {
+      console.error("读取训练记录失败：", error);
+      return [];
+    }
+  }
+
+  function saveTrainingAttempt(attempt) {
+    try {
+      const history = loadTrainingHistory();
+      history.unshift(attempt);
+      localStorage.setItem(
+        TRAINING_KEY,
+        JSON.stringify(history.slice(0, 200))
+      );
+      return true;
+    } catch (error) {
+      console.error("保存训练记录失败：", error);
+      return false;
+    }
+  }
+
+  let activeTraining = null;
+
   function showRetestPanel(point, options) {
     activeRetest = null;
 
@@ -1412,6 +1759,92 @@
       retestAnswer.disabled = false;
     }
   }
+
+  function submitTraining() {
+    if (!activeTraining) return;
+
+    const studentAnswer =
+      trainingAnswer.value.trim();
+
+    if (!studentAnswer) {
+      trainingStatus.textContent =
+        "请先输入孩子的答案。";
+      trainingAnswer.focus();
+      return;
+    }
+
+    const passed =
+      compareSimpleRetestAnswers(
+        studentAnswer,
+        activeTraining.correct_answer
+      );
+
+    if (passed === null) {
+      trainingStatus.textContent =
+        "这道训练题需要进一步判断，请检查答案格式。";
+      return;
+    }
+
+    const attempt = {
+      id:
+        String(Date.now()) +
+        "-" +
+        Math.random().toString(36).slice(2, 8),
+      created_at:
+        new Date().toISOString(),
+      knowledge_point:
+        activeTraining.knowledge_point,
+      focus:
+        activeTraining.focus.title,
+      question:
+        activeTraining.question,
+      correct_answer:
+        activeTraining.correct_answer,
+      student_answer:
+        studentAnswer,
+      passed:
+        passed
+    };
+
+    saveTrainingAttempt(attempt);
+
+    trainingResult.style.display = "block";
+
+    if (passed) {
+      trainingResult.textContent =
+        "✅ 训练通过。" +
+        (activeTraining.explanation
+          ? " 正确思路：" + activeTraining.explanation
+          : "");
+      trainingStatus.textContent =
+        "本次训练结果已记录；能力状态暂不因此次训练直接改变。";
+    } else {
+      trainingResult.textContent =
+        "❌ 这道训练题没有通过。正确答案：" +
+        activeTraining.correct_answer +
+        (activeTraining.explanation
+          ? "。正确思路：" + activeTraining.explanation
+          : "");
+      trainingStatus.textContent =
+        "本次训练结果已记录；建议继续训练后再进行复测。";
+    }
+
+    trainingAnswer.disabled = true;
+    submitTrainingButton.disabled = true;
+  }
+
+  submitTrainingButton.addEventListener(
+    "click",
+    submitTraining
+  );
+
+  closeTrainingButton.addEventListener(
+    "click",
+    function () {
+      trainingCard.style.display = "none";
+      activeTraining = null;
+    }
+  );
 
   submitRetestButton.addEventListener(
     "click",
@@ -1760,6 +2193,35 @@
       item.appendChild(name);
       item.appendChild(detail);
       item.appendChild(action);
+
+      const shouldShowTrainingButton =
+        stats.state === "not_mastered" ||
+        stats.state === "learning" ||
+        stats.state === "unstable" ||
+        stats.state === "recovering";
+
+      if (shouldShowTrainingButton) {
+        const trainingButton =
+          document.createElement("button");
+        trainingButton.className = "secondary";
+        trainingButton.textContent = "🎯 开始针对性训练";
+        trainingButton.addEventListener(
+          "click",
+          function () {
+            showTrainingPanel(
+              point,
+              history,
+              stats
+            );
+          }
+        );
+
+        const trainingWrap =
+          document.createElement("div");
+        trainingWrap.className = "history-actions";
+        trainingWrap.appendChild(trainingButton);
+        item.appendChild(trainingWrap);
+      }
 
       const shouldShowRetestButton =
         stats.state !== "mastered" &&
