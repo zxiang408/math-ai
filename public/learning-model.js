@@ -832,6 +832,15 @@ export function deriveReviewScheduleAt(
     resetPending: retentionResetPending
   };
 
+  if (retentionResetPending) {
+    return {
+      ...base,
+      state: "building",
+      stateText: "保持复习重启",
+      daysUntilDue: null
+    };
+  }
+
   if (
     knowledgeState?.state === "not_mastered" ||
     knowledgeState?.state === "learning" ||
@@ -845,13 +854,11 @@ export function deriveReviewScheduleAt(
     };
   }
 
-  if (retentionResetPending || !dueAt) {
+  if (!dueAt) {
     return {
       ...base,
       state: "building",
-      stateText: retentionResetPending
-        ? "保持复习重启"
-        : "尚未进入长期保持",
+      stateText: "尚未进入长期保持",
       daysUntilDue: null
     };
   }
