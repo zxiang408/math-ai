@@ -753,11 +753,11 @@
 
     <div class="notice">
 
-      当前是 V0.16.0。
+      当前是 V0.17.0。
       <br>
       已接入 OpenRouter 免费模型路由，用于错题照片识别与 AI 分析。
       <br>
-      当前已支持基础错题库、知识点标准化统计、能力档案、复测、针对性训练、分步骤互动辅导，以及长期保持模型；V0.11 建立知识结构图；V0.12 让前置知识证据参与训练路径；V0.13 进行全局训练调度；V0.14 建立训练→复测→长期保持闭环；V0.15 接入 AI 个性化辅导；V0.16 建立统一数学验证引擎。
+      当前已支持基础错题库、知识点标准化统计、能力档案、复测、针对性训练、分步骤互动辅导，以及长期保持模型；V0.11 建立知识结构图；V0.12 让前置知识证据参与训练路径；V0.13 进行全局训练调度；V0.14 建立训练→复测→长期保持闭环；V0.15 接入 AI 个性化辅导；V0.16 建立统一数学验证引擎；V0.17 建立统一学习数据模型与旧数据兼容层。
 
     </div>
 
@@ -773,6 +773,10 @@
 
     <div class="knowledge-graph-summary" id="smartTrainingRecommendation">
       系统会根据知识状态、子能力训练证据和知识结构，自动安排当前最需要训练的环节。
+    </div>
+
+    <div class="knowledge-graph-summary" id="learningDataSummary">
+      统一学习数据模型正在初始化……
     </div>
 
     <div class="button-row">
@@ -909,9 +913,9 @@
   </div>
 
   <div class="footer">
-    小学数学 AI · V0.16.0
+    小学数学 AI · V0.17.0
     <br>
-    <span id="appVersion">程序版本：V0.16.0</span>
+    <span id="appVersion">程序版本：V0.17.0</span>
   </div>
 
 </div>
@@ -923,6 +927,12 @@
     verifyMathAnswer,
     verifyAcceptedAnswer
   } from "./math-engine.js";
+
+  import {
+    buildUnifiedLearningModel,
+    summarizeUnifiedLearningModel,
+    LEARNING_MODEL_VERSION
+  } from "./learning-model.js";
 
 
   const uploadArea =
@@ -966,6 +976,9 @@
 
   const smartTrainingRecommendation =
     document.getElementById("smartTrainingRecommendation");
+
+  const learningDataSummary =
+    document.getElementById("learningDataSummary");
 
   const smartTrainingButton =
     document.getElementById("smartTrainingButton");
@@ -6012,7 +6025,45 @@
     smartTrainingButton.disabled = false;
   }
 
+
+  function renderUnifiedLearningSummary() {
+    if (!learningDataSummary) {
+      return;
+    }
+
+    const model = buildUnifiedLearningModel(
+      {
+        mistakes: loadHistory(),
+        retests: loadRetestHistory(),
+        training: loadTrainingHistory()
+      },
+      standardizeKnowledgePoint
+    );
+
+    const summary =
+      summarizeUnifiedLearningModel(model);
+
+    learningDataSummary.textContent =
+      "📚 统一学习数据 · " +
+      LEARNING_MODEL_VERSION +
+      " ｜ 已汇总 " +
+      summary.event_count +
+      " 条学习证据 ｜ 知识点 " +
+      summary.knowledge_point_count +
+      " 个 ｜ 微技能 " +
+      summary.micro_skill_count +
+      " 个 ｜ 错题 " +
+      summary.mistake_events +
+      " 条 ｜ 复测 " +
+      summary.retest_events +
+      " 条 ｜ 训练 " +
+      summary.training_events +
+      " 条。" +
+      " 目前仍使用本地历史数据；这套统一数据结构将作为后续 Supabase 云端档案的迁移基础。";
+  }
+
   function renderAbilityProfile(history) {
+    renderUnifiedLearningSummary();
     renderSmartTrainingRecommendation(history);
 
     const statsMap = {};
