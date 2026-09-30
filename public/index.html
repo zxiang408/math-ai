@@ -938,8 +938,11 @@
     };
   }
 
-  function showRetestPanel(point) {
+  function showRetestPanel(point, options) {
     activeRetest = null;
+
+    const forceSpaced =
+      Boolean(options && options.forceSpaced);
 
     retestCard.style.display = "block";
     retestKnowledgePoint.textContent =
@@ -988,7 +991,8 @@
             data.knowledge_points.length > 0
               ? data.knowledge_points
               : [point],
-          explanation: data.explanation || ""
+          explanation: data.explanation || "",
+          forceSpaced: forceSpaced
         };
 
         retestStatus.textContent =
@@ -1078,7 +1082,8 @@
         : null;
 
       const testType =
-        daysSincePrevious !== null && daysSincePrevious >= 3
+        activeRetest.forceSpaced ||
+        (daysSincePrevious !== null && daysSincePrevious >= 3)
           ? "spaced_retest"
           : "retest";
 
@@ -1517,6 +1522,9 @@
             ? (Date.now() - lastAttemptDate.getTime()) / 86400000
             : null;
 
+        const testMode =
+          new URLSearchParams(window.location.search).get("testMode") === "1";
+
         if (
           stats.state === "initial_mastery" &&
           daysSinceLast !== null &&
@@ -1536,7 +1544,9 @@
           retestButton.addEventListener(
             "click",
             function () {
-              showRetestPanel(point);
+              showRetestPanel(point, {
+                forceSpaced: false
+              });
             }
           );
         } else {
@@ -1544,7 +1554,9 @@
           retestButton.addEventListener(
             "click",
             function () {
-              showRetestPanel(point);
+              showRetestPanel(point, {
+                forceSpaced: false
+              });
             }
           );
         }
@@ -1553,6 +1565,29 @@
           document.createElement("div");
         buttonWrap.className = "history-actions";
         buttonWrap.appendChild(retestButton);
+
+        if (
+          testMode &&
+          stats.state === "initial_mastery"
+        ) {
+          const testButton =
+            document.createElement("button");
+          testButton.className = "secondary";
+          testButton.textContent =
+            "🧪 测试：立即间隔复测";
+          testButton.title =
+            "仅用于验证状态机；正式使用仍按3天间隔规则执行。";
+          testButton.addEventListener(
+            "click",
+            function () {
+              showRetestPanel(point, {
+                forceSpaced: true
+              });
+            }
+          );
+          buttonWrap.appendChild(testButton);
+        }
+
         item.appendChild(buttonWrap);
       }
 
