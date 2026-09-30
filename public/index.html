@@ -5361,7 +5361,7 @@ window.MathAILearningModel = {
 
     const training = generateNonRepeatedTargetedTraining(
       trainingPoint,
-      effectiveFocus,
+      scheduledFocus,
       sessionIndex || 1,
       microSkillPlan.difficulty
     );
@@ -5399,8 +5399,8 @@ window.MathAILearningModel = {
       correct_answer: training.correct_answer,
       explanation: training.explanation || "",
       steps: getTrainingSteps(
-        point,
-        effectiveFocus,
+        trainingPoint,
+        scheduledFocus,
         training
       ),
       currentStep: 0,
@@ -5437,18 +5437,18 @@ window.MathAILearningModel = {
           ? " ｜ "
           : ""
       ) +
-      effectiveFocus.title +
+      scheduledFocus.title +
       (
         microSkillPlan.label
           ? " ｜ 微技能：" + microSkillPlan.label
           : ""
       ) +
       (
-        effectiveFocus.abilityStateText
-          ? " ｜ 当前：" + effectiveFocus.abilityStateText
+        scheduledFocus.abilityStateText
+          ? " ｜ 当前：" + scheduledFocus.abilityStateText
           : ""
       ) +
-      " ｜ " + effectiveFocus.reason +
+      " ｜ " + (microSkillPlan.reason || scheduledFocus.reason || "") +
       " ｜ 微技能难度 " + activeTraining.difficulty + "/5（" +
       activeTraining.difficulty_label + "）" +
       " ｜ 第" + activeTraining.sessionIndex + "道";
