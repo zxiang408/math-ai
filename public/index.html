@@ -165,6 +165,68 @@
       line-height: 1.6;
     }
 
+    .history-empty {
+      color: #667085;
+      padding: 10px 0;
+    }
+
+    .history-item {
+      padding: 16px;
+      margin-top: 12px;
+      border-radius: 12px;
+      background: #f8fafc;
+      border: 1px solid #eaecf0;
+    }
+
+    .history-meta {
+      color: #667085;
+      font-size: 13px;
+      margin-bottom: 8px;
+    }
+
+    .history-question {
+      font-weight: bold;
+      line-height: 1.6;
+    }
+
+    .history-detail {
+      margin-top: 8px;
+      color: #475467;
+      line-height: 1.6;
+      font-size: 14px;
+    }
+
+    .history-tags {
+      margin-top: 6px;
+    }
+
+    .history-tag {
+      display: inline-block;
+      padding: 4px 8px;
+      margin: 3px 5px 0 0;
+      border-radius: 999px;
+      background: #e0e7ff;
+      font-size: 12px;
+    }
+
+    .history-actions {
+      margin-top: 10px;
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .history-actions button {
+      padding: 8px 12px;
+      font-size: 14px;
+    }
+
+    .danger {
+      background: #fee2e2;
+      color: #991b1b;
+    }
+
+
     .footer {
       margin-top: 30px;
       text-align: center;
@@ -349,8 +411,24 @@
   </div>
 
 
+  <!-- 错题库 -->
+  <div class="card" id="historyCard">
+    <h2>📚 我的错题库</h2>
+    <div class="subtitle" id="historySummary">
+      已保存 0 道错题
+    </div>
+
+    <div id="historyList"></div>
+
+    <div class="button-row">
+      <button class="secondary danger" id="clearHistoryButton">
+        清空错题库
+      </button>
+    </div>
+  </div>
+
   <div class="footer">
-    小学数学 AI · V0.1
+    小学数学 AI · V0.2
   </div>
 
 </div>
@@ -379,6 +457,245 @@
 
   const resultCard =
     document.getElementById("resultCard");
+
+  const historyList =
+    document.getElementById("historyList");
+
+  const historySummary =
+    document.getElementById("historySummary");
+
+  const clearHistoryButton =
+    document.getElementById("clearHistoryButton");
+
+  const HISTORY_KEY =
+    "math-ai-v0.2-mistake-history";
+
+  function loadHistory() {
+    try {
+      const raw = localStorage.getItem(HISTORY_KEY);
+
+      if (!raw) {
+        return [];
+      }
+
+      const data = JSON.parse(raw);
+
+      return Array.isArray(data)
+        ? data
+        : [];
+    } catch (error) {
+      console.error("读取错题库失败：", error);
+      return [];
+    }
+  }
+
+  function saveHistory(history) {
+    try {
+      localStorage.setItem(
+        HISTORY_KEY,
+        JSON.stringify(history)
+      );
+
+      return true;
+    } catch (error) {
+      console.error("保存错题库失败：", error);
+      return false;
+    }
+  }
+
+  function formatHistoryDate(value) {
+    if (!value) {
+      return "时间未知";
+    }
+
+    const date = new Date(value);
+
+    if (Number.isNaN(date.getTime())) {
+      return "时间未知";
+    }
+
+    return date.toLocaleString("zh-CN", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit"
+    });
+  }
+
+  function createHistoryTag(text) {
+    const tag = document.createElement("span");
+    tag.className = "history-tag";
+    tag.textContent = text;
+    return tag;
+  }
+
+  function renderHistory() {
+    const history = loadHistory();
+
+    historySummary.textContent =
+      "已保存 " + history.length + " 道错题";
+
+    historyList.textContent = "";
+
+    if (history.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "history-empty";
+      empty.textContent =
+        "还没有错题。分析第一道错题后，它会自动保存到这里。";
+      historyList.appendChild(empty);
+      clearHistoryButton.disabled = true;
+      return;
+    }
+
+    clearHistoryButton.disabled = false;
+
+    history.forEach(function (item) {
+      const wrapper = document.createElement("div");
+      wrapper.className = "history-item";
+
+      const meta = document.createElement("div");
+      meta.className = "history-meta";
+      meta.textContent =
+        formatHistoryDate(item.created_at);
+
+      const question = document.createElement("div");
+      question.className = "history-question";
+      question.textContent =
+        item.question || "题目未能确认";
+
+      const detail = document.createElement("div");
+      detail.className = "history-detail";
+      detail.textContent =
+        "孩子答案：" +
+        (item.student_answer || "无法确认") +
+        " ｜ 正确答案：" +
+        (item.correct_answer || "无法确认") +
+        " ｜ 错误类型：" +
+        (item.error_type || "无法判断");
+
+      const tags = document.createElement("div");
+      tags.className = "history-tags";
+
+      if (
+        Array.isArray(item.knowledge_points) &&
+        item.knowledge_points.length > 0
+      ) {
+        item.knowledge_points.forEach(function (point) {
+          tags.appendChild(
+            createHistoryTag(point)
+          );
+        });
+      } else {
+        tags.appendChild(
+          createHistoryTag("未识别到明确知识点")
+        );
+      }
+
+      const actions = document.createElement("div");
+      actions.className = "history-actions";
+
+      const detailButton =
+        document.createElement("button");
+      detailButton.className = "secondary";
+      detailButton.textContent = "查看分析";
+      detailButton.addEventListener(
+        "click",
+        function () {
+          renderResult(item);
+          resultCard.style.display = "block";
+          resultCard.scrollIntoView({
+            behavior: "smooth",
+            block: "start"
+          });
+        }
+      );
+
+      const deleteButton =
+        document.createElement("button");
+      deleteButton.className =
+        "secondary danger";
+      deleteButton.textContent = "删除";
+      deleteButton.addEventListener(
+        "click",
+        function () {
+          const nextHistory =
+            loadHistory().filter(function (record) {
+              return record.id !== item.id;
+            });
+
+          saveHistory(nextHistory);
+          renderHistory();
+        }
+      );
+
+      actions.appendChild(detailButton);
+      actions.appendChild(deleteButton);
+
+      wrapper.appendChild(meta);
+      wrapper.appendChild(question);
+      wrapper.appendChild(detail);
+      wrapper.appendChild(tags);
+      wrapper.appendChild(actions);
+
+      historyList.appendChild(wrapper);
+    });
+  }
+
+  function saveMistakeRecord(data) {
+    const history = loadHistory();
+
+    const record = {
+      id: String(Date.now()) +
+        "-" +
+        Math.random().toString(36).slice(2, 8),
+      created_at: new Date().toISOString(),
+      question: data.question || "",
+      student_answer: data.student_answer || "",
+      correct_answer: data.correct_answer || "",
+      knowledge_points: Array.isArray(data.knowledge_points)
+        ? data.knowledge_points.slice(0, 8)
+        : [],
+      error_type: data.error_type || "",
+      analysis: data.analysis || "",
+      confidence:
+        typeof data.confidence === "number"
+          ? data.confidence
+          : null,
+      unclear: Boolean(data.unclear)
+    };
+
+    history.unshift(record);
+
+    const limitedHistory =
+      history.slice(0, 100);
+
+    return saveHistory(limitedHistory);
+  }
+
+  clearHistoryButton.addEventListener(
+    "click",
+    function () {
+      if (
+        loadHistory().length === 0
+      ) {
+        return;
+      }
+
+      const confirmed = window.confirm(
+        "确定要删除全部错题记录吗？此操作无法恢复。"
+      );
+
+      if (!confirmed) {
+        return;
+      }
+
+      localStorage.removeItem(HISTORY_KEY);
+      renderHistory();
+    }
+  );
+
+  renderHistory();
 
 
   // 点击上传区域
@@ -627,6 +944,16 @@
       }
 
       renderResult(data);
+
+      const saved =
+        saveMistakeRecord(data);
+
+      renderHistory();
+
+      if (!saved) {
+        status.textContent =
+          "AI 分析完成，但错题保存失败，请检查浏览器存储空间。";
+      }
 
       const confidenceText =
         typeof data.confidence === "number"
