@@ -860,25 +860,26 @@
   }
 
   function getKnowledgeState(point, history, retestHistory) {
-    const hasOriginalMistake = history.some(function (item) {
+    const matchingMistakes = history.filter(function (item) {
       return standardizeKnowledgePoints(item.knowledge_points).includes(point);
     });
 
-    if (!hasOriginalMistake) {
-      return {
-        state: "not_mastered",
-        stateText: "未掌握",
-        stats: {
-          attempts: 0,
-          passes: 0,
-          failures: 0,
-          consecutiveCorrect: 0,
-          history: []
-        }
-      };
-    }
+    const hasKnowledgeEvidence = matchingMistakes.some(function (item) {
+      return standardizeErrorNature(
+        item.error_nature,
+        item.error_type
+      ) === "知识理解不足";
+    });
 
     const stats = getRetestStats(point, retestHistory);
+
+    if (!hasKnowledgeEvidence) {
+      return {
+        state: "observed",
+        stateText: "待观察",
+        stats: stats
+      };
+    }
 
     let state = "not_mastered";
     let previousDate = null;
@@ -926,7 +927,8 @@
       initial_mastery: "初步掌握",
       unstable: "掌握不稳定",
       recovering: "恢复中",
-      mastered: "已掌握"
+      mastered: "已掌握",
+      observed: "待观察"
     };
 
     return {
@@ -1390,7 +1392,8 @@
           learning: 2,
           recovering: 3,
           initial_mastery: 4,
-          mastered: 5
+          mastered: 5,
+          observed: 6
         };
 
         const stateA = order[a[1].state] ?? 99;
@@ -1459,7 +1462,10 @@
       const action = document.createElement("div");
       action.className = "ability-stats";
 
-      if (stats.state === "not_mastered") {
+      if (stats.state === "observed") {
+        action.textContent =
+          "建议：先正常练习，暂不把这次偶然失误认定为知识薄弱。";
+      } else if (stats.state === "not_mastered") {
         action.textContent =
           stats.retest_attempts === 0
             ? "建议：先进行复测，确认是否真正理解。"
@@ -1491,6 +1497,7 @@
 
       const shouldShowRetestButton =
         stats.state !== "mastered" &&
+        stats.state !== "observed" &&
         (
           stats.knowledge_errors >= 1 ||
           stats.retest_attempts >= 1
