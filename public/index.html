@@ -791,7 +791,7 @@
 
     <div class="notice">
 
-      当前是 V0.18.0。
+      当前是 V0.19.0。
       <br>
       已加入可开关的 Mock AI 开发测试模式；默认不调用外部 AI，可继续验证错题库、能力档案、针对性训练、分步骤辅导与复测闭环。
       <br>
@@ -953,9 +953,9 @@
   </div>
 
   <div class="footer">
-    小学数学 AI · V0.18.0
+    小学数学 AI · V0.19.0
     <br>
-    <span id="appVersion">程序版本：V0.18.0 · Mock AI 可切换</span>
+    <span id="appVersion">程序版本：V0.19.0 · Mock AI 可切换 · 动态难度</span>
   </div>
 
 </div>
@@ -3486,6 +3486,143 @@ window.MathAILearningModel = {
     };
   }
 
+  /*
+   * V0.19 动态难度状态机
+   * 难度由程序根据最近训练证据自动调整，AI 不直接决定难度。
+   */
+  function getTrainingDifficultyState(point, trainingHistory) {
+    const history = Array.isArray(trainingHistory) ? trainingHistory : [];
+
+    const matching = history
+      .filter(function (item) {
+        return (
+          standardizeKnowledgePoint(item.knowledge_point) === point &&
+          item.attempt_type !== "training_completed"
+        );
+      })
+      .slice()
+      .sort(function (a, b) {
+        return new Date(a.created_at || 0) - new Date(b.created_at || 0);
+      });
+
+    const sessionMap = {};
+
+    matching.forEach(function (item, index) {
+      const key = item.training_session_id
+        ? String(item.training_session_id)
+        : "legacy:" + normalizeTrainingQuestion(item.question || "") + ":" + index;
+
+      if (!sessionMap[key]) {
+        sessionMap[key] = {
+          key: key,
+          records: []
+        };
+      }
+
+      sessionMap[key].records.push(item);
+    });
+
+    const sessions = Object.values(sessionMap)
+      .sort(function (a, b) {
+        const at = new Date(a.records[a.records.length - 1]?.created_at || 0).getTime();
+        const bt = new Date(b.records[b.records.length - 1]?.created_at || 0).getTime();
+        return at - bt;
+      })
+      .map(function (session) {
+        const records = session.records.slice().sort(function (a, b) {
+          return new Date(a.created_at || 0) - new Date(b.created_at || 0);
+        });
+
+        const initial = records.find(function (item) {
+          return item.attempt_type === "initial_answer";
+        });
+
+        const difficultyRecord = records.find(function (item) {
+          return Number(item.difficulty) >= 1;
+        });
+
+        const requiredSupport =
+          Boolean(initial && initial.passed === false) ||
+          records.some(function (item) {
+            return (
+              item.attempt_type === "guided_step" ||
+              item.step_mode === "simplified" ||
+              item.simplification_used === true
+            );
+          });
+
+        return {
+          difficulty: Math.max(
+            1,
+            Math.min(
+              5,
+              Number(difficultyRecord?.difficulty || 1)
+            )
+          ),
+          requiredSupport: requiredSupport,
+          independentPass:
+            Boolean(initial && initial.passed === true) &&
+            !requiredSupport
+        };
+      });
+
+    if (sessions.length === 0) {
+      return {
+        difficulty: 1,
+        label: "基础",
+        reason: "首次训练，从难度1开始。"
+      };
+    }
+
+    const latest = sessions[sessions.length - 1];
+    let difficulty = latest.difficulty;
+
+    if (latest.requiredSupport) {
+      difficulty = Math.max(1, difficulty - 1);
+
+      return {
+        difficulty: difficulty,
+        label:
+          difficulty === 1 ? "基础" :
+          difficulty === 2 ? "巩固" :
+          difficulty === 3 ? "进阶" :
+          difficulty === 4 ? "变式" : "迁移",
+        reason: "最近一轮出现独立作答困难或需要分步辅导，下一轮降低1级。"
+      };
+    }
+
+    const recent = sessions.slice(-2);
+
+    if (
+      recent.length === 2 &&
+      recent.every(function (session) {
+        return session.independentPass;
+      })
+    ) {
+      difficulty = Math.min(5, difficulty + 1);
+
+      return {
+        difficulty: difficulty,
+        label:
+          difficulty === 1 ? "基础" :
+          difficulty === 2 ? "巩固" :
+          difficulty === 3 ? "进阶" :
+          difficulty === 4 ? "变式" : "迁移",
+        reason: "最近连续两轮首次独立完成且未使用提示，下一轮提高1级。"
+      };
+    }
+
+    return {
+      difficulty: difficulty,
+      label:
+        difficulty === 1 ? "基础" :
+        difficulty === 2 ? "巩固" :
+        difficulty === 3 ? "进阶" :
+        difficulty === 4 ? "变式" : "迁移",
+      reason: "最近证据不足以升降难度，本轮保持当前难度。"
+    };
+  }
+
   function getTrainingAbilityFocus(
     point,
     trainingHistory
@@ -4087,7 +4224,12 @@ window.MathAILearningModel = {
     );
   }
 
-  function generateTargetedTraining(point, focus, sessionIndex) {
+  function generateTargetedTraining(
+    point,
+    focus,
+    sessionIndex,
+    difficulty
+  ) {
     function randInt(min, max) {
       return Math.floor(Math.random() * (max - min + 1)) + min;
     }
@@ -4099,6 +4241,17 @@ window.MathAILearningModel = {
     const round =
       Math.max(1, Number(sessionIndex || 1));
 
+    const level =
+      Math.max(
+        1,
+        Math.min(
+          5,
+          Number(difficulty || 1)
+        )
+      );
+
+    // V0.19 中 round 与 level 分离：
+    // round 用于避免重复，level 决定题目复杂度。
     // 从 V0.9.2 开始，训练题不仅看错误类型，
     // 还优先看训练过程中暴露的具体学习证据。
     const evidenceKey =
@@ -4177,115 +4330,70 @@ window.MathAILearningModel = {
     }
 
     if (point === "数与代数 / 倍数关系") {
-      const multiple = randInt(3, 6);
-      const small = randInt(6, 12);
+      const multiple =
+        randInt(3, level >= 4 ? 8 : 6);
+
+      const small =
+        randInt(
+          level <= 2 ? 5 : 8,
+          level >= 4 ? 20 : 12
+        );
+
       const large = small * multiple;
       const sum = small + large;
 
-      if (
-        focusTitle === "概念与方法训练" ||
-        evidenceKey === "large_number_parts"
-      ) {
-        return {
-          question:
-            "甲数是乙数的" + multiple +
-            "倍。如果甲、乙两数的和是" + sum +
-            "，乙数是多少？",
-          correct_answer: String(small),
-          explanation:
-            "把乙数看成1份，甲数就是" + multiple +
-            "份，一共" + (multiple + 1) +
-            "份，乙数为" + sum + "÷" + (multiple + 1) +
-            "=" + small + "。"
-        };
-      }
+      if (level <= 3) {
+        const wording =
+          level === 1
+            ? "一个数是另一个数的" + multiple +
+              "倍。如果两个数的和是" + sum +
+              "，较小的数是多少？"
+            : level === 2
+              ? "甲数是乙数的" + multiple +
+                "倍。甲、乙两数的和是" + sum +
+                "，乙数是多少？"
+              : "甲数是乙数的" + multiple +
+                "倍。两个数的和为" + sum +
+                "，求较小的数。";
 
-      if (focusTitle === "概念与方法训练") {
         return {
-          question:
-            "一个数是另一个数的" + multiple +
-            "倍。如果两个数的和是" + sum +
-            "，较小的数是多少？",
+          question: wording,
           correct_answer: String(small),
           explanation:
-            "把较小的数看成1份，较大的数就是" + multiple +
+            "较小数是1份，较大数是" + multiple +
             "份，一共" + (multiple + 1) +
-            "份，所以较小的数是" + sum + "÷" +
+            "份，所以较小数为" + sum + "÷" +
             (multiple + 1) + "=" + small + "。"
         };
       }
 
-      if (
-        evidenceKey === "total_parts"
-      ) {
+      if (level === 4) {
+        const difference = large - small;
+
         return {
           question:
             "甲数是乙数的" + multiple +
-            "倍。如果甲、乙两数的和是" + sum +
-            "，两个数一共可以看成多少份？然后求乙数。",
-          correct_answer: String(small),
-          explanation:
-            "乙数看成1份，甲数是" + multiple +
-            "份，因此两个数一共" + (multiple + 1) +
-            "份；乙数为" + sum + "÷" +
-            (multiple + 1) + "=" + small + "。"
-        };
-      }
-
-      if (
-        evidenceKey === "unit_value"
-      ) {
-        return {
-          question:
-            "甲数是乙数的" + multiple +
-            "倍，甲、乙两数的和是" + sum +
-            "。先求1份是多少，乙数是多少？",
-          correct_answer: String(small),
-          explanation:
-            "先确定总份数：" + (multiple + 1) +
-            "份；再用总和" + sum + "÷" +
-            (multiple + 1) + "=" + small +
-            "，得到1份，也就是乙数。"
-        };
-      }
-
-      if (focusTitle === "稳定性变式训练") {
-        if (round % 2 === 0) {
-          return {
-            question:
-              "甲数是乙数的" + multiple +
-              "倍。如果甲、乙两数的和是" + sum +
-              "，乙数是多少？",
-            correct_answer: String(small),
-            explanation:
-              "把乙数看成1份，甲数是" + multiple +
-              "份，一共" + (multiple + 1) +
-              "份，所以乙数是" + sum + "÷" +
-              (multiple + 1) + "=" + small + "。"
-          };
-        }
-
-        return {
-          question:
-            "甲数是乙数的" + multiple + "倍。甲数比乙数多" +
-            (large - small) + "。乙数是多少？",
+            "倍，甲数比乙数多" + difference +
+            "。乙数是多少？",
           correct_answer: String(small),
           explanation:
             "甲比乙多" + (multiple - 1) +
-            "份，所以乙数是" + (large - small) +
-            "÷" + (multiple - 1) + "=" + small + "。"
+            "份，所以乙数为" + difference +
+            "÷" + (multiple - 1) +
+            "=" + small + "。"
         };
       }
 
       return {
         question:
-          "一个数是另一个数的" + multiple +
-          "倍。如果两个数的和是" + sum +
-          "，较小的数是多少？",
+          "甲数是乙数的" + multiple +
+          "倍。如果两数的和是" + sum +
+          "，先说出乙数相当于几份，再求乙数。",
         correct_answer: String(small),
         explanation:
-          "两个数一共是" + (multiple + 1) +
-          "份，较小数为" + sum + "÷" +
+          "乙数是1份，甲数是" + multiple +
+          "份，共" + (multiple + 1) +
+          "份；乙数为" + sum + "÷" +
           (multiple + 1) + "=" + small + "。"
       };
     }
@@ -4355,6 +4463,46 @@ window.MathAILearningModel = {
         question.match(/(\d+)倍/);
       const sumMatch =
         question.match(/和是(\d+)/);
+
+      const differenceMatch =
+        question.match(/比.*多(\d+)/);
+
+      const multiple =
+        multipleMatch ? Number(multipleMatch[1]) : null;
+
+      if (
+        multiple !== null &&
+        differenceMatch &&
+        !sumMatch
+      ) {
+        const difference =
+          Number(differenceMatch[1]);
+
+        const correct =
+          String(training.correct_answer || "");
+
+        return [
+          {
+            prompt:
+              "第1步：较小数看成1份。较大数是" +
+              multiple + "份，所以较大数比较小数多几份？",
+            accepted: [String(multiple - 1)]
+          },
+          {
+            prompt:
+              "第2步：把多出的" +
+              (multiple - 1) +
+              "份对应到" +
+              difference +
+              "上，" +
+              difference +
+              "÷" +
+              (multiple - 1) +
+              "等于多少？",
+            accepted: correct ? [correct] : []
+          }
+        ];
+      }
 
       const multiple =
         multipleMatch ? Number(multipleMatch[1]) : null;
@@ -4547,7 +4695,8 @@ window.MathAILearningModel = {
   function generateNonRepeatedTargetedTraining(
     point,
     focus,
-    sessionIndex
+    sessionIndex,
+    difficulty
   ) {
     const previousQuestions = loadTrainingHistory()
       .filter(function (item) {
@@ -4572,7 +4721,8 @@ window.MathAILearningModel = {
       training = generateTargetedTraining(
         point,
         focus,
-        sessionIndex
+        sessionIndex,
+        difficulty
       );
 
       if (!training || !training.question) {
@@ -4618,10 +4768,20 @@ window.MathAILearningModel = {
       targetStats.state
     );
 
+    const trainingHistory =
+      loadTrainingHistory();
+
+    const difficultyState =
+      getTrainingDifficultyState(
+        trainingPoint,
+        trainingHistory
+      );
+
     const training = generateNonRepeatedTargetedTraining(
       trainingPoint,
       focus,
-      sessionIndex || 1
+      sessionIndex || 1,
+      difficultyState.difficulty
     );
 
     if (!training) {
@@ -4640,6 +4800,9 @@ window.MathAILearningModel = {
       prerequisite_point:
         plan.prerequisitePoint || null,
       focus: focus,
+      difficulty: difficultyState.difficulty,
+      difficulty_label: difficultyState.label,
+      difficulty_reason: difficultyState.reason,
       question: training.question,
       correct_answer: training.correct_answer,
       explanation: training.explanation || "",
@@ -4694,11 +4857,17 @@ window.MathAILearningModel = {
           : ""
       ) +
       " ｜ " + focus.reason +
+      " ｜ 难度 " + activeTraining.difficulty + "/5（" +
+      activeTraining.difficulty_label + "）" +
       " ｜ 第" + activeTraining.sessionIndex + "道";
     trainingStatus.textContent =
       useMockAI
-        ? "测试题已生成，请输入一组测试作答。"
-        : "题目已生成，请让孩子独立完成。";
+        ? "测试题已生成。当前难度 " +
+          activeTraining.difficulty + "/5（" +
+          activeTraining.difficulty_label + "）。"
+        : "题目已生成。当前难度 " +
+          activeTraining.difficulty + "/5（" +
+          activeTraining.difficulty_label + "）。";
     trainingQuestion.textContent =
       training.question;
     trainingAnswer.value = "";
@@ -5097,6 +5266,12 @@ window.MathAILearningModel = {
         ),
       focus:
         activeTraining.focus.title,
+      difficulty:
+        activeTraining.difficulty,
+      difficulty_label:
+        activeTraining.difficulty_label,
+      difficulty_reason:
+        activeTraining.difficulty_reason,
       question:
         activeTraining.question,
       correct_answer:
@@ -5159,6 +5334,12 @@ window.MathAILearningModel = {
         ),
       focus:
         activeTraining.focus.title,
+      difficulty:
+        activeTraining.difficulty,
+      difficulty_label:
+        activeTraining.difficulty_label,
+      difficulty_reason:
+        activeTraining.difficulty_reason,
       question:
         activeTraining.question,
       correct_answer:
@@ -5681,6 +5862,12 @@ window.MathAILearningModel = {
         ),
       focus:
         activeTraining.focus.title,
+      difficulty:
+        activeTraining.difficulty,
+      difficulty_label:
+        activeTraining.difficulty_label,
+      difficulty_reason:
+        activeTraining.difficulty_reason,
       question:
         activeTraining.question,
       student_answer:
