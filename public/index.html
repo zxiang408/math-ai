@@ -689,6 +689,14 @@
           <option value="decimal">小数：小数点对齐</option>
         </select>
       </div>
+      <div style="margin-top:10px;">
+        <button class="secondary danger" id="resetMockDataButton" type="button">
+          🗑️ 重置全部测试数据
+        </button>
+      </div>
+      <div style="margin-top:6px;font-size:12px;">
+        仅清除本浏览器中的错题、训练、复测测试记录；不会修改代码。
+      </div>
     </div>
 
   </div>
@@ -2136,6 +2144,9 @@ window.MathAILearningModel = {
 
   const studentAnswerTitle =
     document.getElementById("studentAnswerTitle");
+
+  const resetMockDataButton =
+    document.getElementById("resetMockDataButton");
 
   const status =
     document.getElementById("status");
@@ -7997,6 +8008,44 @@ window.MathAILearningModel = {
       if (useMockAI) {
         updateMockModeUI();
       }
+    });
+  }
+
+  if (resetMockDataButton) {
+    resetMockDataButton.addEventListener("click", function () {
+      if (!useMockAI) {
+        status.textContent =
+          "当前不是 Mock AI 模式。请先开启开发测试模式，再重置测试数据。";
+        return;
+      }
+
+      const confirmed = window.confirm(
+        "确定要清空当前浏览器里的全部开发测试数据吗？\n\n将清除：错题、训练、复测记录。\n不会删除程序代码，也不会影响 AI Key 或 Cloudflare 配置。"
+      );
+
+      if (!confirmed) {
+        return;
+      }
+
+      localStorage.removeItem(HISTORY_KEY);
+      localStorage.removeItem(TRAINING_KEY);
+      localStorage.removeItem(RETEST_KEY);
+
+      activeTraining = null;
+      activeRetest = null;
+      selectedFile = null;
+      fileInput.value = "";
+      preview.src = "";
+      preview.style.display = "none";
+      resultCard.style.display = "none";
+      trainingCard.style.display = "none";
+      retestCard.style.display = "none";
+
+      renderHistory();
+      updateMockModeUI();
+
+      status.textContent =
+        "✅ 开发测试数据已全部清空，现在可以从零开始验收。";
     });
   }
 
