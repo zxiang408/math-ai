@@ -1,3 +1,5 @@
+(function () {
+
 /**
  * Math AI — V0.16 Unified Deterministic Math Verification Engine
  *
@@ -234,3 +236,6 @@ window.MathAIMathEngine = {
   evaluateSimpleExpression: evaluateSimpleExpression,
   getVerificationEngineVersion: getVerificationEngineVersion
 };
+
+
+})();
