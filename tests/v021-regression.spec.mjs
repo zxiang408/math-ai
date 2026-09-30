@@ -66,7 +66,7 @@ function modelOf(data, api) {
   );
 }
 
-const browser = await chromium.launch({ headless: true });
+const browser = await chromium.launch({ headless: true, executablePath: "/usr/bin/chromium", args: ["--no-sandbox"] });
 const page = await browser.newPage();
 
 try {
