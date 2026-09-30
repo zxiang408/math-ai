@@ -1,4 +1,4 @@
-const APP_VERSION = "V0.15.0";
+const APP_VERSION = "V0.15.2";
 
 const JSON_HEADERS = {
   "Content-Type": "application/json; charset=UTF-8",
@@ -996,7 +996,7 @@ async function tutorStep(request, env) {
   );
   const steps = Array.isArray(body?.steps) ? body.steps : [];
   const history = Array.isArray(body?.history)
-    ? body.history.slice(-8)
+    ? body.history.slice(-6)
     : [];
 
   if (!point || !question || !currentPrompt || !studentAnswer) {
@@ -1008,218 +1008,252 @@ async function tutorStep(request, env) {
   }
 
   if (point !== "数与代数 / 倍数关系") {
-    return jsonResponse(
-      {
-        enabled: false,
-        action: "fallback",
-        coach_message: "",
-        next_prompt: "",
-        diagnosis: "",
-        confidence: 1,
-        model: "deterministic_fallback",
-      },
-      200,
-      request,
-    );
+    return jsonResponse({
+      enabled: false,
+      action: "fallback",
+      coach_message: "",
+      next_prompt: "",
+      diagnosis: "",
+      confidence: 1,
+      model: "deterministic_fallback",
+    });
   }
 
   const safeSteps = steps.map(function (step, index) {
     return {
       index: index,
       prompt: String(step?.prompt || ""),
-      accepted_hint: Array.isArray(step?.accepted)
-        ? step.accepted.map(function (value) {
-            return String(value);
-          })
-        : [],
     };
   });
 
-  const prompt = `你是一名小学数学一对一辅导老师。
-这是“数与代数 / 倍数关系”的针对性训练。
-你的任务不是直接给孩子答案，而是理解孩子刚才的回答，并决定下一步怎样教。
+  // V0.15.2：Tutor 使用轻量纯 JSON 请求。
+  // 不经过通用 json_schema，以降低免费模型因结构化输出不稳定而失败/超时的概率。
+  const prompt = `你是一名小学四年级数学一对一辅导老师。
+你现在只辅导“数与代数 / 倍数关系”。
 
-【题目】
+【整道题】
 ${question}
 
-【当前训练步骤】
+【当前步骤】
 第${stepIndex + 1}步：${currentPrompt}
 
-【孩子刚才的回答】
+【孩子刚才回答】
 ${studentAnswer}
 
-【程序提供的标准步骤骨架】
-${JSON.stringify(safeSteps, null, 2)}
+【前面步骤骨架】
+${JSON.stringify(safeSteps)}
 
-【之前的互动记录】
-${JSON.stringify(history, null, 2)}
+【前面互动记录】
+${JSON.stringify(history)}
 
-【程序已知的最终正确答案】
-${correctAnswer}
+你的目标：
+- 判断孩子刚才这一步到底哪里想对了、哪里想错了。
+- 不要直接公布整道题最终答案。
+- 不要跳过当前步骤。
+- 如果孩子只是把“较大数的份数”和“总份数”混淆，要明确纠正这种混淆，但仍要让孩子自己回答。
+- 如果孩子答错，重新设计一个更容易理解的短问题。
+- 如果孩子连续卡住，允许把当前问题拆得更小。
+- 如果孩子答对，给出自然的鼓励，并进入下一步。
+- 语言必须像老师对四年级孩子说话，短句、具体、易懂。
+- 只输出一个 JSON 对象，不要 Markdown，不要 JSON 之外的文字。
 
-必须遵守：
-1. 不要直接公布整道题的最终答案，也不要替孩子完成后面的计算。
-2. 先判断孩子当前这一步的理解。特别注意区分“1份”“倍数对应的份数”“总份数”和“具体数值”。
-3. 如果孩子这一步正确，action 用“advance”；如果已经是最后一步，用“finish”。
-4. 如果孩子错误但只是理解接近，action 用“retry”，换一种更容易理解的问法。
-5. 如果孩子连续卡住、概念混淆明显，action 用“simplify”，把当前一步拆得更小。
-6. next_step_index 只能等于当前步骤或下一步骤，不能跳步。
-7. next_prompt 是下一句给孩子看的话，语言要短、自然、适合小学四年级。
-8. coach_message 先指出孩子哪里想对了或哪里需要再想，不能把后面的答案一次性告诉孩子。
-9. 不要修改数学真值。程序会单独负责最终答案校验。
-10. 只返回合法 JSON。
-
-字段：
+JSON 字段：
 {
-  "correct": true,
   "action": "advance",
-  "coach_message": "给孩子的简短反馈",
-  "next_step_index": 1,
-  "next_prompt": "下一句给孩子看的问题",
-  "diagnosis": "对孩子当前理解状态的简短判断",
+  "coach_message": "给孩子看的简短反馈",
+  "next_prompt": "下一句给孩子看的问题或提示",
+  "diagnosis": "对孩子当前理解的简短判断",
   "confidence": 0.0
 }
 
 action 只能是：
-advance / retry / simplify / finish
+advance
+retry
+simplify
+finish
 `;
 
-  const result = await requestStructuredJson(
-    env,
-    prompt,
-    "tutor_step",
-    {
-      correct: {
-        type: "boolean",
-        description: "孩子当前步骤在概念上是否正确",
-      },
-      action: {
-        type: "string",
-        enum: ["advance", "retry", "simplify", "finish"],
-        description: "下一教学动作",
-      },
-      coach_message: {
-        type: "string",
-        description: "给孩子看的简短反馈",
-      },
-      next_step_index: {
-        type: "integer",
-        minimum: 0,
-        maximum: Math.max(0, steps.length - 1),
-        description: "下一教学步骤索引",
-      },
-      next_prompt: {
-        type: "string",
-        description: "下一句给孩子看的问题或提示",
-      },
-      diagnosis: {
-        type: "string",
-        description: "对孩子当前理解状态的简短判断",
-      },
-      confidence: {
-        type: "number",
-        minimum: 0,
-        maximum: 1,
-        description: "对教学判断的把握度",
-      },
-    },
-    [
-      "correct",
-      "action",
-      "coach_message",
-      "next_step_index",
-      "next_prompt",
-      "diagnosis",
-      "confidence",
-    ],
-  );
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 12000);
 
-  if (!result.ok) {
-    return jsonResponse(result.data, result.status, request);
+  let response;
+  let upstreamBody;
+
+  try {
+    response = await fetch(
+      "https://openrouter.ai/api/v1/chat/completions",
+      {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${env.OPENROUTER_API_KEY}`,
+          "Content-Type": "application/json",
+          "HTTP-Referer": "https://math-ai.zxiang408.workers.dev",
+          "X-Title": "小学数学 AI Tutor",
+        },
+        body: JSON.stringify({
+          model: "qwen/qwen3.8-27b:free",
+          temperature: 0.2,
+          max_tokens: 500,
+          reasoning: { enabled: false },
+          messages: [
+            {
+              role: "user",
+              content: prompt,
+            },
+          ],
+        }),
+        signal: controller.signal,
+      },
+    );
+
+    try {
+      upstreamBody = await response.json();
+    } catch (_) {
+      return jsonResponse(
+        {
+          enabled: false,
+          error: `OpenRouter 返回了无法解析的响应（HTTP ${response.status}）。`,
+          code: "TUTOR_BAD_UPSTREAM_RESPONSE",
+        },
+        502,
+        request,
+      );
+    }
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      return jsonResponse(
+        {
+          enabled: false,
+          error: "AI Tutor 响应超过12秒。",
+          code: "TUTOR_TIMEOUT",
+        },
+        504,
+        request,
+      );
+    }
+
+    return jsonResponse(
+      {
+        enabled: false,
+        error:
+          "连接 AI Tutor 失败：" +
+          (error?.message || "未知网络错误"),
+        code: "TUTOR_NETWORK_ERROR",
+      },
+      502,
+      request,
+    );
+  } finally {
+    clearTimeout(timeoutId);
   }
 
-  const parsed = result.data || {};
-  let action = [
-    "advance",
-    "retry",
-    "simplify",
-    "finish",
-  ].includes(String(parsed.action || ""))
-    ? String(parsed.action)
-    : "retry";
+  if (!response.ok) {
+    const errorObject = upstreamBody?.error || {};
 
-  let nextStepIndex = Number.isInteger(parsed.next_step_index)
-    ? parsed.next_step_index
-    : stepIndex;
+    return jsonResponse(
+      {
+        enabled: false,
+        error:
+          errorObject?.message ||
+          upstreamBody?.message ||
+          "AI Tutor 请求失败。",
+        upstream_status: response.status,
+        upstream_code: errorObject?.code ?? null,
+        code: "TUTOR_UPSTREAM_ERROR",
+      },
+      502,
+      request,
+    );
+  }
 
-  nextStepIndex = Math.max(
-    stepIndex,
-    Math.min(stepIndex + 1, Math.max(stepIndex, steps.length - 1)),
-  );
+  const message = upstreamBody?.choices?.[0]?.message;
+  const rawText = contentToText(message?.content);
+  const parsed = extractJson(rawText);
 
-  const accepted = Array.isArray(steps[stepIndex]?.accepted)
-    ? steps[stepIndex].accepted
-    : [];
+  if (!parsed) {
+    return jsonResponse(
+      {
+        enabled: false,
+        error: "AI Tutor 返回内容无法解析为 JSON。",
+        code: "TUTOR_INVALID_JSON",
+        raw_preview: rawText.slice(0, 1000),
+      },
+      502,
+      request,
+    );
+  }
 
-  const normalizedStudent = studentAnswer
-    .trim()
-    .replace(/\s+/g, "");
+  let action = String(parsed.action || "retry");
+  if (!["advance", "retry", "simplify", "finish"].includes(action)) {
+    action = "retry";
+  }
 
-  const localAccepted = accepted.some(function (value) {
-    return String(value)
-      .trim()
-      .replace(/\s+/g, "") === normalizedStudent;
+  let nextPrompt = String(parsed.next_prompt || "").trim();
+
+  // 数学真值和步骤推进仍由程序控制，AI 不能自行判定一个错误答案为正确并跳步。
+  const currentAccepted =
+    Array.isArray(steps[stepIndex]?.accepted)
+      ? steps[stepIndex].accepted
+      : [];
+
+  const studentNormalized =
+    studentAnswer.trim().replace(/\s+/g, "");
+
+  const localAccepted = currentAccepted.some(function (value) {
+    return (
+      String(value).trim().replace(/\s+/g, "") ===
+      studentNormalized
+    );
   });
 
-  const numericStudent = extractLastNumericValue(normalizedStudent);
-
-  const localAcceptedWithNumber =
-    numericStudent !== null &&
-    accepted.some(function (value) {
+  const studentNumber = extractLastNumericValue(studentNormalized);
+  const numericAccepted =
+    studentNumber !== null &&
+    currentAccepted.some(function (value) {
       const n = extractLastNumericValue(
-        String(value)
-          .trim()
-          .replace(/\s+/g, ""),
+        String(value).trim().replace(/\s+/g, ""),
       );
-      return (
-        n !== null &&
-        Math.abs(numericStudent - n) < 1e-10
-      );
+      return n !== null && Math.abs(studentNumber - n) < 1e-10;
     });
 
   const deterministicCorrect =
-    localAccepted || localAcceptedWithNumber;
+    localAccepted || numericAccepted;
 
-  // 数学真值由程序决定。AI 不能因为误判而让孩子跳过一个步骤。
   if (deterministicCorrect) {
-    if (stepIndex >= steps.length - 1) {
-      action = "finish";
-      nextStepIndex = stepIndex;
-    } else {
-      action = "advance";
-      nextStepIndex = stepIndex + 1;
-    }
+    action =
+      stepIndex >= steps.length - 1
+        ? "finish"
+        : "advance";
   } else if (action === "advance" || action === "finish") {
     action = "retry";
-    nextStepIndex = stepIndex;
   }
 
-  const safeConfidence =
-    typeof parsed.confidence === "number"
-      ? Math.max(0, Math.min(1, parsed.confidence))
-      : null;
+  if (!nextPrompt) {
+    nextPrompt =
+      action === "advance"
+        ? "很好，我们继续下一步。"
+        : action === "simplify"
+          ? "我们把这一步再拆小一点。"
+          : "再想一次这一步，先不要急着往后做。";
+  }
 
   return jsonResponse(
     {
       enabled: true,
       correct: deterministicCorrect,
       action: action,
-      coach_message: String(parsed.coach_message || "").trim(),
-      next_step_index: nextStepIndex,
-      next_prompt: String(parsed.next_prompt || "").trim(),
-      diagnosis: String(parsed.diagnosis || "").trim(),
-      confidence: safeConfidence,
-      model: result.model || null,
+      coach_message: String(
+        parsed.coach_message || "",
+      ).trim(),
+      next_prompt: nextPrompt,
+      diagnosis: String(
+        parsed.diagnosis || "",
+      ).trim(),
+      confidence:
+        typeof parsed.confidence === "number"
+          ? Math.max(0, Math.min(1, parsed.confidence))
+          : null,
+      model: upstreamBody?.model ?? "qwen/qwen3.8-27b:free",
     },
     200,
     request,
