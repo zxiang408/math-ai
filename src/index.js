@@ -244,7 +244,14 @@ function standardizeErrorNature(value, errorType) {
   const normalizedErrorType =
     standardizeErrorType(errorType);
 
-  if (ERROR_NATURES.includes(text)) {
+  if (
+    text &&
+    text !== "无法判断" &&
+    (
+      text === "偶然失误" ||
+      text === "知识理解不足"
+    )
+  ) {
     return text;
   }
 
@@ -265,9 +272,8 @@ function standardizeErrorNature(value, errorType) {
     return "知识理解不足";
   }
 
-  // A concept-understanding error is evidence of a knowledge-related
-  // error for this occurrence, while the ability profile still requires
-  // repeated evidence before calling the knowledge point persistently weak.
+  // Use the error type as a fallback when the model returned
+  // "无法判断" for the nature.
   if (normalizedErrorType === "概念理解错误") {
     return "知识理解不足";
   }
