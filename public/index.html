@@ -757,7 +757,7 @@
       <br>
       已接入 OpenRouter 免费模型路由，用于错题照片识别与 AI 分析。
       <br>
-      当前已支持基础错题库、知识点标准化统计、能力档案、复测、针对性训练、分步骤互动辅导，以及长期保持模型；V0.11 建立知识结构图；V0.12 让前置知识证据参与训练路径；V0.13 开始进行全局训练调度。
+      当前已支持基础错题库、知识点标准化统计、能力档案、复测、针对性训练、分步骤互动辅导，以及长期保持模型；V0.11 建立知识结构图；V0.12 让前置知识证据参与训练路径；V0.13 进行全局训练调度；V0.14 建立训练→复测→长期保持闭环。
 
     </div>
 
@@ -2787,6 +2787,174 @@
     };
   }
 
+  /*
+   * V0.14 训练闭环状态机
+   *
+   * 训练不再无限重复：
+   * 当前微技能不稳定 → 继续该微技能；
+   * 当前微技能稳定 → 自动切换下一个未稳定微技能；
+   * 所有已接入微技能都稳定 → 进入知识点复测；
+   * 复测失败 → 回到训练；
+   * 复测成功 → 交给长期保持机制。
+   */
+  function getTrainingAbilityProgress(
+    point,
+    trainingHistory
+  ) {
+    const definitions =
+      getTrainingAbilityDefinitions(point);
+
+    if (
+      !Array.isArray(definitions) ||
+      definitions.length === 0
+    ) {
+      return {
+        total: 0,
+        mastered: 0,
+        active: null
+      };
+    }
+
+    const rows = definitions.map(function (definition) {
+      const state =
+        getTrainingEvidenceAbilityState(
+          point,
+          definition.key,
+          trainingHistory
+        );
+
+      return {
+        key: definition.key,
+        label: definition.label,
+        state: state.state,
+        stateText: state.stateText,
+        sessions: state.sessions,
+        independentPasses:
+          state.independentPasses,
+        promptedSessions:
+          state.promptedSessions
+      };
+    });
+
+    return {
+      total: rows.length,
+      mastered: rows.filter(function (row) {
+        return row.state === "mastered";
+      }).length,
+      active:
+        rows.find(function (row) {
+          return row.state !== "mastered";
+        }) || null,
+      rows: rows
+    };
+  }
+
+  function getTrainingNextAction(
+    requestedPoint,
+    history
+  ) {
+    const point =
+      String(requestedPoint || "");
+
+    const trainingHistory =
+      loadTrainingHistory();
+
+    const retestHistory =
+      loadRetestHistory();
+
+    const knowledgeState =
+      getKnowledgeState(
+        point,
+        history,
+        retestHistory
+      );
+
+    const progress =
+      getTrainingAbilityProgress(
+        point,
+        trainingHistory
+      );
+
+    // 已掌握的知识点不再继续训练，由长期保持/复测机制接管。
+    if (knowledgeState.state === "mastered") {
+      return {
+        action: "retention",
+        point: point,
+        title: "进入长期保持",
+        reason:
+          "这个知识点已经完成知识层面的掌握确认，后续按间隔保持机制处理。"
+      };
+    }
+
+    // 当前知识点有明确的微技能定义，并且所有已验证微技能都已形成稳定证据，
+    // 此时最合理的下一步不是继续刷题，而是做一次新的知识点复测。
+    if (
+      progress.total > 0 &&
+      progress.mastered === progress.total
+    ) {
+      return {
+        action: "retest",
+        point: point,
+        title: "进入知识点复测",
+        reason:
+          "这个知识点的已接入微技能都已经形成连续独立正确证据，现在需要用新的整题复测确认是否真正掌握。"
+      };
+    }
+
+    return {
+      action: "continue_training",
+      point: point,
+      title: "继续针对性训练",
+      reason:
+        "仍存在尚未稳定的训练证据，继续训练当前最需要解决的微技能。"
+    };
+  }
+
+  function applyTrainingNextAction() {
+    if (!activeTraining) return;
+
+    const requestedPoint =
+      activeTraining.requested_knowledge_point ||
+      activeTraining.knowledge_point;
+
+    const history =
+      loadHistory();
+
+    const nextAction =
+      getTrainingNextAction(
+        requestedPoint,
+        history
+      );
+
+    activeTraining.nextAction =
+      nextAction;
+
+    if (nextAction.action === "retest") {
+      nextTrainingButton.textContent =
+        "📝 进入知识点复测";
+      nextTrainingButton.style.display =
+        "inline-block";
+
+      trainingStatus.textContent =
+        nextAction.reason;
+      return;
+    }
+
+    if (nextAction.action === "retention") {
+      nextTrainingButton.style.display =
+        "none";
+
+      trainingStatus.textContent =
+        "这个知识点已经完成掌握确认，后续由长期保持机制负责复测。";
+      return;
+    }
+
+    nextTrainingButton.textContent =
+      "➡️ 再练一道";
+    nextTrainingButton.style.display =
+      "inline-block";
+  }
+
   function getTrainingFocus(point, history, state) {
     const matching = history
       .filter(function (item) {
@@ -4010,14 +4178,14 @@
           : "");
 
       trainingStatus.textContent =
-        "本次训练已完成；训练结果不会直接改变能力状态。";
+        "本次训练已完成；训练结果不会直接改变知识层面的能力状态。";
 
       trainingHint.style.display = "none";
       trainingStepResult.style.display = "none";
       trainingAnswer.disabled = true;
       submitTrainingButton.disabled = true;
       recordTrainingCompletion();
-      nextTrainingButton.style.display = "inline-block";
+      applyTrainingNextAction();
       return;
     }
 
@@ -4336,11 +4504,11 @@
         : "");
 
     trainingStatus.textContent =
-      "本次训练已完成；训练结果不会直接改变能力状态。";
+      "本次训练已完成；训练结果不会直接改变知识层面的能力状态。";
 
     recordTrainingCompletion();
 
-    nextTrainingButton.style.display = "inline-block";
+    applyTrainingNextAction();
   }
 
   function submitTrainingStep() {
@@ -4597,13 +4765,46 @@
     function () {
       if (!activeTraining) return;
 
-      const nextIndex =
-        (activeTraining.sessionIndex || 1) + 1;
+      const action =
+        activeTraining.nextAction ||
+        getTrainingNextAction(
+          activeTraining.requested_knowledge_point ||
+          activeTraining.knowledge_point,
+          loadHistory()
+        );
 
       const point =
         activeTraining.requested_knowledge_point ||
         activeTraining.knowledge_point;
-      const history = loadHistory();
+
+      if (action.action === "retest") {
+        const history =
+          loadHistory();
+
+        trainingCard.style.display =
+          "none";
+        activeTraining = null;
+
+        showRetestPanel(
+          point,
+          { forceSpaced: false }
+        );
+        return;
+      }
+
+      if (action.action === "retention") {
+        nextTrainingButton.style.display =
+          "none";
+        trainingStatus.textContent =
+          "这个知识点已经完成掌握确认，后续由长期保持机制负责。";
+        return;
+      }
+
+      const nextIndex =
+        (activeTraining.sessionIndex || 1) + 1;
+
+      const history =
+        loadHistory();
 
       const stats =
         getKnowledgeState(
