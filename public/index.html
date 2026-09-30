@@ -197,6 +197,33 @@
       margin-left: 12px;
     }
 
+    .retest-question {
+      padding: 16px;
+      margin-top: 14px;
+      border-radius: 12px;
+      background: #f8fafc;
+      border: 1px solid #eaecf0;
+      line-height: 1.7;
+      font-size: 17px;
+    }
+
+    .retest-answer-input {
+      width: 100%;
+      margin-top: 12px;
+      padding: 12px;
+      border: 1px solid #d0d5dd;
+      border-radius: 10px;
+      font-size: 16px;
+    }
+
+    .retest-result {
+      margin-top: 14px;
+      padding: 14px;
+      border-radius: 10px;
+      background: #f8fafc;
+      line-height: 1.7;
+    }
+
     .ability-empty {
       color: #667085;
       padding: 6px 0;
@@ -469,11 +496,11 @@
 
     <div class="notice">
 
-      当前是 V0.3。
+      当前是 V0.4。
       <br>
       已接入 OpenRouter 免费模型路由，用于错题照片识别与 AI 分析。
       <br>
-      当前已支持基础错题库、知识点标准化统计和初步能力档案；后续再加入针对性出题和分步骤引导。
+      当前已支持基础错题库、知识点标准化统计、初步能力档案和知识点复测；后续再加入针对性训练和分步骤引导。
 
     </div>
 
@@ -488,6 +515,35 @@
     </div>
 
     <div id="abilityList"></div>
+  </div>
+
+  <!-- 复测题 -->
+  <div class="card" id="retestCard" style="display: none;">
+    <h2>📝 知识点复测</h2>
+    <div class="subtitle" id="retestKnowledgePoint"></div>
+
+    <div class="status" id="retestStatus"></div>
+
+    <div class="retest-question" id="retestQuestion"></div>
+
+    <input
+      class="retest-answer-input"
+      id="retestAnswer"
+      type="text"
+      placeholder="请输入孩子的答案"
+      autocomplete="off"
+    >
+
+    <div class="button-row">
+      <button class="primary" id="submitRetestButton">
+        提交答案
+      </button>
+      <button class="secondary" id="closeRetestButton">
+        关闭
+      </button>
+    </div>
+
+    <div class="retest-result" id="retestResult" style="display: none;"></div>
   </div>
 
   <!-- 错题库 -->
@@ -512,7 +568,7 @@
   </div>
 
   <div class="footer">
-    小学数学 AI · V0.3
+    小学数学 AI · V0.4
   </div>
 
 </div>
@@ -559,6 +615,33 @@
 
   const abilityList =
     document.getElementById("abilityList");
+
+  const retestCard =
+    document.getElementById("retestCard");
+
+  const retestKnowledgePoint =
+    document.getElementById("retestKnowledgePoint");
+
+  const retestStatus =
+    document.getElementById("retestStatus");
+
+  const retestQuestion =
+    document.getElementById("retestQuestion");
+
+  const retestAnswer =
+    document.getElementById("retestAnswer");
+
+  const submitRetestButton =
+    document.getElementById("submitRetestButton");
+
+  const closeRetestButton =
+    document.getElementById("closeRetestButton");
+
+  const retestResult =
+    document.getElementById("retestResult");
+
+  const RETEST_KEY =
+    "math-ai-v0.4-retest-history";
 
   const HISTORY_KEY =
     "math-ai-v0.2-mistake-history";
@@ -694,6 +777,260 @@
 
     return result;
   }
+
+  let activeRetest = null;
+
+  function loadRetestHistory() {
+    try {
+      const raw = localStorage.getItem(RETEST_KEY);
+
+      if (!raw) {
+        return [];
+      }
+
+      const data = JSON.parse(raw);
+
+      return Array.isArray(data)
+        ? data
+        : [];
+    } catch (error) {
+      console.error("读取复测记录失败：", error);
+      return [];
+    }
+  }
+
+  function saveRetestHistory(records) {
+    try {
+      localStorage.setItem(
+        RETEST_KEY,
+        JSON.stringify(records.slice(0, 200))
+      );
+      return true;
+    } catch (error) {
+      console.error("保存复测记录失败：", error);
+      return false;
+    }
+  }
+
+  function saveRetestAttempt(attempt) {
+    const history = loadRetestHistory();
+    history.unshift(attempt);
+    return saveRetestHistory(history);
+  }
+
+  function getRetestStats(point, records) {
+    const matching = records.filter(function (item) {
+      return standardizeKnowledgePoints(
+        item.knowledge_points
+      ).includes(point);
+    });
+
+    const attempts = matching.length;
+    const passes = matching.filter(function (item) {
+      return item.passed === true;
+    }).length;
+
+    return {
+      attempts: attempts,
+      passes: passes,
+      failures: attempts - passes
+    };
+  }
+
+  function showRetestPanel(point) {
+    activeRetest = null;
+
+    retestCard.style.display = "block";
+    retestKnowledgePoint.textContent =
+      "目标知识点：" + point;
+    retestStatus.textContent =
+      "正在生成一道新的同类题……";
+    retestQuestion.textContent = "";
+    retestAnswer.value = "";
+    retestAnswer.disabled = true;
+    submitRetestButton.disabled = true;
+    retestResult.style.display = "none";
+
+    retestCard.scrollIntoView({
+      behavior: "smooth",
+      block: "start"
+    });
+
+    fetch("/api/retest/generate", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        knowledge_point: point
+      })
+    })
+      .then(async function (response) {
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            data.error ||
+            "复测题生成失败，请稍后再试。"
+          );
+        }
+
+        return data;
+      })
+      .then(function (data) {
+        activeRetest = {
+          knowledge_point: point,
+          question: data.question,
+          correct_answer: data.correct_answer,
+          knowledge_points:
+            Array.isArray(data.knowledge_points) &&
+            data.knowledge_points.length > 0
+              ? data.knowledge_points
+              : [point],
+          explanation: data.explanation || ""
+        };
+
+        retestStatus.textContent =
+          "题目已生成，请让孩子独立完成。";
+
+        retestQuestion.textContent =
+          activeRetest.question;
+
+        retestAnswer.disabled = false;
+        submitRetestButton.disabled = false;
+        retestAnswer.focus();
+      })
+      .catch(function (error) {
+        console.error(error);
+        retestStatus.textContent =
+          "生成失败：" +
+          (error.message || "未知错误");
+      });
+  }
+
+  async function submitRetest() {
+    if (!activeRetest) {
+      return;
+    }
+
+    const studentAnswer =
+      retestAnswer.value.trim();
+
+    if (!studentAnswer) {
+      retestStatus.textContent =
+        "请先输入孩子的答案。";
+      retestAnswer.focus();
+      return;
+    }
+
+    retestStatus.textContent =
+      "正在判断答案……";
+    submitRetestButton.disabled = true;
+    retestAnswer.disabled = true;
+
+    try {
+      const response = await fetch(
+        "/api/retest/evaluate",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            question: activeRetest.question,
+            correct_answer:
+              activeRetest.correct_answer,
+            student_answer: studentAnswer,
+            knowledge_points:
+              activeRetest.knowledge_points
+          })
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data.error ||
+          "复测判断失败，请稍后再试。"
+        );
+      }
+
+      const attempt = {
+        id:
+          String(Date.now()) +
+          "-" +
+          Math.random().toString(36).slice(2, 8),
+        created_at:
+          new Date().toISOString(),
+        knowledge_points:
+          activeRetest.knowledge_points,
+        question:
+          activeRetest.question,
+        correct_answer:
+          activeRetest.correct_answer,
+        student_answer:
+          studentAnswer,
+        passed:
+          Boolean(data.correct),
+        error_type:
+          data.error_type || "",
+        error_nature:
+          data.error_nature || "",
+        analysis:
+          data.analysis || "",
+        explanation:
+          activeRetest.explanation || ""
+      };
+
+      saveRetestAttempt(attempt);
+
+      retestResult.style.display = "block";
+
+      if (attempt.passed) {
+        retestResult.textContent =
+          "✅ 回答正确！这说明孩子这次复测已经通过。" +
+          (attempt.explanation
+            ? " 正确思路：" + attempt.explanation
+            : "");
+        retestStatus.textContent =
+          "复测完成。";
+      } else {
+        retestResult.textContent =
+          "❌ 这次复测没有通过。" +
+          (attempt.analysis
+            ? " AI判断：" + attempt.analysis
+            : "") +
+          " 正确答案：" +
+          attempt.correct_answer;
+        retestStatus.textContent =
+          "复测结果已记录，能力档案会据此更新。";
+      }
+
+      renderHistory();
+
+    } catch (error) {
+      console.error(error);
+      retestStatus.textContent =
+        "判断失败：" +
+        (error.message || "未知错误");
+      submitRetestButton.disabled = false;
+      retestAnswer.disabled = false;
+    }
+  }
+
+  submitRetestButton.addEventListener(
+    "click",
+    submitRetest
+  );
+
+  closeRetestButton.addEventListener(
+    "click",
+    function () {
+      retestCard.style.display = "none";
+      activeRetest = null;
+    }
+  );
 
   function loadHistory() {
     try {
@@ -863,28 +1200,43 @@
   }
 
   function getAbilityStatus(stats) {
-    // One occurrence is not enough evidence to call a knowledge point weak.
-    if (stats.total === 1 && stats.knowledge_errors === 0) {
-      return "待观察";
-    }
-
-    // One knowledge-related error is a signal, but still not enough
-    // to conclude persistent weakness.
-    if (stats.knowledge_errors === 1) {
-      return "需要复测";
-    }
-
-    // Repeated knowledge-related errors are stronger evidence that
-    // the knowledge point needs targeted intervention.
     if (stats.knowledge_errors >= 2) {
+      if (
+        stats.retest_attempts > 0 &&
+        stats.retest_failures === 0
+      ) {
+        return "复测通过，继续巩固";
+      }
+
       return "反复出现知识性错误";
     }
 
-    return "暂未发现明显知识性问题";
+    if (stats.knowledge_errors === 1) {
+      if (stats.retest_passes >= 1 && stats.retest_failures === 0) {
+        return "复测通过";
+      }
+
+      if (stats.retest_failures >= 1) {
+        return "复测未通过";
+      }
+
+      return "需要复测";
+    }
+
+    if (stats.retest_attempts > 0) {
+      if (stats.retest_failures === 0) {
+        return "复测通过";
+      }
+
+      return "继续观察";
+    }
+
+    return "待观察";
   }
 
   function renderAbilityProfile(history) {
     const statsMap = {};
+    const retestHistory = loadRetestHistory();
 
     history.forEach(function (item) {
       const points = standardizeKnowledgePoints(
@@ -897,7 +1249,10 @@
             total: 0,
             knowledge_errors: 0,
             accidental_errors: 0,
-            unknown_errors: 0
+            unknown_errors: 0,
+            retest_attempts: 0,
+            retest_passes: 0,
+            retest_failures: 0
           };
         }
 
@@ -916,6 +1271,21 @@
           stats.unknown_errors += 1;
         }
       });
+    });
+
+    Object.keys(statsMap).forEach(function (point) {
+      const retestStats =
+        getRetestStats(
+          point,
+          retestHistory
+        );
+
+      statsMap[point].retest_attempts =
+        retestStats.attempts;
+      statsMap[point].retest_passes =
+        retestStats.passes;
+      statsMap[point].retest_failures =
+        retestStats.failures;
     });
 
     const entries = Object.entries(statsMap)
@@ -960,6 +1330,12 @@
         " ｜ 知识性错误 " + stats.knowledge_errors + " 次" +
         " ｜ 偶然失误 " + stats.accidental_errors + " 次";
 
+      if (stats.retest_attempts > 0) {
+        detail.textContent +=
+          " ｜ 复测 " + stats.retest_attempts + " 次" +
+          " ｜ 通过 " + stats.retest_passes + " 次";
+      }
+
       if (stats.unknown_errors > 0) {
         detail.textContent +=
           " ｜ 性质未确定 " + stats.unknown_errors + " 次";
@@ -968,7 +1344,10 @@
       const action = document.createElement("div");
       action.className = "ability-stats";
 
-      if (stats.knowledge_errors >= 2) {
+      if (stats.retest_failures >= 1) {
+        action.textContent =
+          "建议：继续训练后再次复测，观察是否重复出错。";
+      } else if (stats.knowledge_errors >= 2) {
         action.textContent =
           "建议：进入针对性训练，并继续复测。";
       } else if (stats.knowledge_errors === 1) {
@@ -989,6 +1368,26 @@
       item.appendChild(name);
       item.appendChild(detail);
       item.appendChild(action);
+
+      if (stats.knowledge_errors >= 1) {
+        const retestButton =
+          document.createElement("button");
+        retestButton.className = "secondary";
+        retestButton.textContent = "生成复测题";
+        retestButton.addEventListener(
+          "click",
+          function () {
+            showRetestPanel(point);
+          }
+        );
+
+        const buttonWrap =
+          document.createElement("div");
+        buttonWrap.className = "history-actions";
+        buttonWrap.appendChild(retestButton);
+        item.appendChild(buttonWrap);
+      }
+
       item.appendChild(status);
 
       abilityList.appendChild(item);
