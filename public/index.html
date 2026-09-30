@@ -4558,13 +4558,15 @@
     trainingStepAnswer.disabled = true;
 
     let tutor = null;
+    let tutorRequestFailed = false;
+    let tutorFailureMessage = "";
 
     if (
       activeTraining.tutor_mode === "ai" &&
       activeTraining.knowledge_point === "数与代数 / 倍数关系"
     ) {
       trainingStatus.textContent =
-        "🧠 正在理解孩子这一步的回答……";
+        "🧠 AI Tutor 正在理解孩子这一步的回答……";
 
       try {
         const response = await fetch(
@@ -4601,19 +4603,23 @@
 
         if (response.ok && data && data.enabled) {
           tutor = data;
-        } else if (!response.ok) {
-          throw new Error(
-            data.error ||
-            "AI 辅导请求失败。"
-          );
+        } else {
+          tutorRequestFailed = true;
+          tutorFailureMessage =
+            data?.error || "AI Tutor 没有返回可用结果。";
+          throw new Error(tutorFailureMessage);
         }
       } catch (error) {
         console.error("AI Tutor 请求失败：", error);
+        tutorRequestFailed = true;
+        tutorFailureMessage =
+          tutorFailureMessage ||
+          error?.message ||
+          "未知错误";
         tutor = null;
       }
     }
 
-    // 数学真值仍由本地程序判断；AI 负责理解、反馈和教学决策。
     const passed =
       localPassed;
 
@@ -4730,6 +4736,17 @@
         tutor?.coach_message ||
         fallbackFeedback;
 
+      if (tutor) {
+        trainingStatus.textContent =
+          "🧠 AI Tutor 已根据孩子刚才的回答调整辅导。";
+      } else if (tutorRequestFailed) {
+        trainingStatus.textContent =
+          "⚠️ 本次 AI Tutor 未响应，已使用原有确定性辅导作为兜底。";
+      } else {
+        trainingStatus.textContent =
+          "先解决当前这一步，不要急着往后做。";
+      }
+
       let nextStep = null;
 
       if (
@@ -4758,8 +4775,14 @@
 
           trainingHintText.textContent =
             nextStep.prompt;
-          trainingStatus.textContent =
-            "我们把这一步拆得更小一点，再试一次。";
+
+          if (tutor) {
+            trainingStatus.textContent =
+              "🧠 AI Tutor 判断需要拆小这一步，我们换一种更容易理解的问法。";
+          } else {
+            trainingStatus.textContent =
+              "我们把这一步拆得更小一点，再试一次。";
+          }
         }
       }
 
@@ -4778,8 +4801,13 @@
             tutor.next_prompt;
         }
 
-        trainingStatus.textContent =
-          "先解决当前这一步，不要急着往后做。";
+        if (tutor && tutorAction === "retry") {
+          trainingStatus.textContent =
+            "🧠 AI Tutor 换一种问法，我们再想一次。";
+        } else if (!tutor && !tutorRequestFailed) {
+          trainingStatus.textContent =
+            "先解决当前这一步，不要急着往后做。";
+        }
       }
 
       submitTrainingStepButton.disabled = false;
@@ -4860,7 +4888,7 @@
 
     trainingStatus.textContent =
       tutor
-        ? "🧠 根据刚才的回答，我们继续下一步。"
+        ? "🧠 AI Tutor 已理解上一回答，我们继续下一步。"
         : "第" + (nextIndex + 1) + "步：先独立填写，答对后才能继续。";
 
     trainingStepAnswer.focus();
