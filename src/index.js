@@ -1,4 +1,4 @@
-const APP_VERSION = "V0.4.4";
+const APP_VERSION = "V0.5.2";
 
 const JSON_HEADERS = {
   "Content-Type": "application/json; charset=UTF-8",
@@ -362,7 +362,7 @@ function normalizeResult(result) {
 async function requestStructuredJson(env, prompt, functionName, properties, required) {
   async function doRequest(useStructuredFormat) {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30000);
+    const timeoutId = setTimeout(() => controller.abort(), 20000);
 
     try {
       const requestBody = {
@@ -378,7 +378,7 @@ async function requestStructuredJson(env, prompt, functionName, properties, requ
           allow_fallbacks: true,
         },
         temperature: 0.2,
-        max_tokens: 1200,
+        max_tokens: 700,
         messages: [
           {
             role: "user",
@@ -516,7 +516,7 @@ async function requestStructuredJson(env, prompt, functionName, properties, requ
           status: 504,
           retryable: false,
           data: {
-            error: "AI 服务响应超时（30 秒）。免费模型当前可能繁忙，请稍后再试。",
+            error: "AI 服务响应超时（20 秒）。免费模型当前可能繁忙，请稍后再试。",
             code: "OPENROUTER_TIMEOUT",
           },
         };
@@ -564,6 +564,105 @@ async function requestStructuredJson(env, prompt, functionName, properties, requ
   return first;
 }
 
+function generateFastRetest(knowledgePoint) {
+  const point = String(knowledgePoint || "").trim();
+
+  function randInt(min, max) {
+    return Math.floor(Math.random() * (max - min + 1)) + min;
+  }
+
+  if (point === "图形与几何 / 正方形面积") {
+    const side = randInt(3, 12);
+    return {
+      question: `一个正方形的边长是${side}厘米，这个正方形的面积是多少平方厘米？`,
+      correct_answer: String(side * side) + "平方厘米",
+      knowledge_points: [point],
+      explanation: `正方形的面积等于边长乘边长，${side}×${side}=${side * side}。`,
+      model: "local_fast_template",
+    };
+  }
+
+  if (point === "图形与几何 / 长方形面积") {
+    const length = randInt(5, 15);
+    const width = randInt(3, 10);
+    return {
+      question: `一个长方形的长是${length}厘米，宽是${width}厘米，这个长方形的面积是多少平方厘米？`,
+      correct_answer: String(length * width) + "平方厘米",
+      knowledge_points: [point],
+      explanation: `长方形的面积等于长乘宽，${length}×${width}=${length * width}。`,
+      model: "local_fast_template",
+    };
+  }
+
+  if (point === "数与代数 / 积的变化规律") {
+    const factor = randInt(2, 6);
+    return {
+      question: `一个乘法算式中，如果一个因数不变，另一个因数扩大${factor}倍，那么积扩大多少倍？`,
+      correct_answer: String(factor) + "倍",
+      knowledge_points: [point],
+      explanation: `一个因数不变，另一个因数扩大${factor}倍，积也扩大${factor}倍。`,
+      model: "local_fast_template",
+    };
+  }
+
+  if (point === "数与代数 / 倍数关系") {
+    const small = randInt(6, 15);
+    const multiple = randInt(2, 6);
+    const large = small * multiple;
+    const sum = small + large;
+    return {
+      question: `一个数是另一个数的${multiple}倍。如果这两个数的和是${sum}，较小的数是多少？`,
+      correct_answer: String(small),
+      knowledge_points: [point],
+      explanation: `设较小的数为x，较大的数就是${multiple}x，所以（1+${multiple}）x=${sum}，得到x=${small}。`,
+      model: "local_fast_template",
+    };
+  }
+
+  if (point === "数与代数 / 四则运算") {
+    const a = randInt(20, 90);
+    const b = randInt(2, 9);
+    const c = randInt(3, 12);
+    const result = a + b * c;
+    return {
+      question: `计算：${a}＋${b}×${c}＝？`,
+      correct_answer: String(result),
+      knowledge_points: [point],
+      explanation: `先算乘法：${b}×${c}=${b * c}，再算加法：${a}＋${b * c}=${result}。`,
+      model: "local_fast_template",
+    };
+  }
+
+  if (point === "数与代数 / 小数") {
+    const a = (randInt(12, 45) / 10).toFixed(1);
+    const b = (randInt(10, 35) / 10).toFixed(1);
+    const result = (Number(a) + Number(b)).toFixed(1).replace(/\.0$/, "");
+    return {
+      question: `计算：${a}＋${b}＝？`,
+      correct_answer: result,
+      knowledge_points: [point],
+      explanation: `把小数点对齐后相加，结果是${result}。`,
+      model: "local_fast_template",
+    };
+  }
+
+  if (point === "数与代数 / 比与比例") {
+    const unit = randInt(3, 8);
+    const first = unit * 2;
+    const second = unit * 3;
+    const target = unit * 5;
+    return {
+      question: `如果甲、乙两数的比是${first}:${second}，当甲是${first * 2}时，乙是多少？`,
+      correct_answer: String(target),
+      knowledge_points: [point],
+      explanation: `${first}变成${first * 2}扩大2倍，乙也扩大2倍，因此乙为${second * 2}，即${second * 2}。`,
+      model: "local_fast_template",
+    };
+  }
+
+  return null;
+}
+
 async function generateRetest(request, env) {
   if (request.method === "OPTIONS") {
     const headers = new Headers({
@@ -607,6 +706,14 @@ async function generateRetest(request, env) {
       400,
       request,
     );
+  }
+
+  // 常见小学知识点优先走本地题型模板，避免孩子每次点题都等待免费模型。
+  // 未覆盖的知识点继续使用 AI 生成，不改变原有功能。
+  const fastRetest = generateFastRetest(knowledgePoint);
+
+  if (fastRetest) {
+    return jsonResponse(fastRetest, 200, request);
   }
 
   const prompt = `你是一名小学数学老师。
