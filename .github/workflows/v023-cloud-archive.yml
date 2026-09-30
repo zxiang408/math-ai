@@ -1,0 +1,26 @@
+name: V0.23 Cloud Archive Regression
+
+on:
+  push:
+    paths:
+      - "src/index.js"
+      - "src/cloud-archive.js"
+      - "supabase/**"
+      - "tests/v023-cloud-archive.spec.mjs"
+      - ".github/workflows/v023-cloud-archive.yml"
+  workflow_dispatch:
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Run cloud archive regression
+        run: node tests/v023-cloud-archive.spec.mjs
