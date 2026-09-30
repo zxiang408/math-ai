@@ -217,6 +217,8 @@ confidence 为 0 到 1 之间的小数，表示你对整道题识别与分析的
             "qwen/qwen3.8-27b:free",
             "google/gemma-4-31b-it:free",
             "google/gemma-4-26b-a4b-it:free",
+            "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+            "openrouter/free",
           ],
           temperature: 0.2,
           max_tokens: 1800,
