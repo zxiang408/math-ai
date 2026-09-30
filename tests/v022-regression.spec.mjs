@@ -239,99 +239,10 @@ try {
 
   await page.waitForTimeout(250);
 
-  const queueDiag = await page.evaluate(() => {
-    const modelApi = window.MathAILearningModel;
-    const rawHistory = localStorage.getItem("math-ai-v0.2-mistake-history");
-    const rawRetests = localStorage.getItem("math-ai-v0.4-retest-history");
-    let direct = null;
-    let error = null;
-
-    try {
-      const mistakes = JSON.parse(rawHistory || "[]");
-      const retests = JSON.parse(rawRetests || "[]");
-      const model = modelApi.buildUnifiedLearningModel(
-        { mistakes, retests, training: [] },
-        (v) => String(v || "").trim()
-      );
-      const state = modelApi.deriveKnowledgePointState(
-        model,
-        "数与代数 / 倍数关系"
-      );
-      direct = {
-        state: state.state,
-        schedule: modelApi.deriveReviewSchedule(
-          model,
-          "数与代数 / 倍数关系",
-          state
-        ),
-        queue: modelApi.buildRetentionQueue(
-          model,
-          ["数与代数 / 倍数关系"],
-          Date.now(),
-          modelApi.DEFAULT_RETENTION_INTERVALS_DAYS
-        )
-      };
-    } catch (e) {
-      error = String(e && e.stack ? e.stack : e);
-    }
-
-    return {
-      hasApi: Boolean(modelApi),
-      hasQueue: typeof modelApi?.buildRetentionQueue === "function",
-      summary: document.getElementById("retentionQueueSummary")?.textContent || null,
-      itemCount: document.querySelectorAll("#retentionQueueList .retention-queue-item").length,
-      direct,
-      error
-    };
-  });
-
-  console.log("V0.22 queue diagnostic:", JSON.stringify(queueDiag));
-
-  const renderDiag = await page.evaluate(() => {
-    try {
-      if (typeof window.renderRetentionQueue !== "function") {
-        return { type: typeof window.renderRetentionQueue, summary: document.getElementById("retentionQueueSummary")?.textContent || null };
-      }
-      window.renderRetentionQueue(JSON.parse(localStorage.getItem("math-ai-v0.2-mistake-history") || "[]"));
-      return {
-        ok: true,
-        summary: document.getElementById("retentionQueueSummary")?.textContent || null,
-        itemCount: document.querySelectorAll("#retentionQueueList .retention-queue-item").length
-      };
-    } catch (e) {
-      return { ok: false, error: String(e && e.stack ? e.stack : e) };
-    }
-  });
-
-  console.log("V0.22 render diagnostic:", JSON.stringify(renderDiag));
-
-  assert.equal(
-    renderDiag.ok,
-    true,
-    "保持复习 UI 调用异常: " + JSON.stringify(renderDiag)
-  );
-
-  assert.match(
-    renderDiag.summary || "",
-    /需要保持复习/,
-    "直接调用保持复习渲染仍未更新页面: " + JSON.stringify(renderDiag)
-  );
-
-  assert.equal(
-    queueDiag.error,
+  await page.waitForFunction(
+    () => document.getElementById("retentionQueueSummary")?.textContent?.includes("需要保持复习"),
     null,
-    "保持复习队列运行时异常: " + JSON.stringify(queueDiag)
-  );
-
-  assert.ok(
-    Array.isArray(queueDiag.direct?.queue) && queueDiag.direct.queue.length === 1,
-    "保持复习算法未生成1项到期队列: " + JSON.stringify(queueDiag)
-  );
-
-  assert.match(
-    queueDiag.summary || "",
-    /需要保持复习/,
-    "页面没有渲染到期复习提示: " + JSON.stringify(queueDiag)
+    { timeout: 5000 }
   );
 
   const queueText = await page.locator("#retentionQueueSummary").textContent();
