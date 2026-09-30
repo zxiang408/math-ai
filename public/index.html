@@ -7383,6 +7383,10 @@ window.MathAILearningModel = {
     if (cloudSyncStatus) {
       cloudSyncStatus.textContent = textValue;
     }
+
+    if (cloudSyncButton) {
+      cloudSyncButton.disabled = cloudSyncBusy;
+    }
   }
 
   function cloudSyncRequest(path, options) {
@@ -7594,6 +7598,7 @@ window.MathAILearningModel = {
     }
 
     cloudSyncBusy = true;
+    setCloudSyncStatus("☁️ 正在同步学习档案……");
 
     Promise.resolve().then(async function () {
       while (cloudSyncQueued) {
@@ -7612,6 +7617,9 @@ window.MathAILearningModel = {
       }
     }).finally(function () {
       cloudSyncBusy = false;
+      if (cloudSyncButton) {
+        cloudSyncButton.disabled = false;
+      }
     });
   }
 
@@ -7675,6 +7683,11 @@ window.MathAILearningModel = {
       return;
     }
 
+    cloudSyncBusy = true;
+    if (cloudSyncButton) {
+      cloudSyncButton.disabled = true;
+    }
+
     try {
       setCloudSyncStatus("☁️ 正在同步学习档案……");
       const status = await cloudSyncRequest("/api/sync/status");
@@ -7709,6 +7722,11 @@ window.MathAILearningModel = {
         (error.message || "未知错误") +
         "；本地档案未受影响。"
       );
+    } finally {
+      cloudSyncBusy = false;
+      if (cloudSyncButton) {
+        cloudSyncButton.disabled = false;
+      }
     }
   }
 
