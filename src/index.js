@@ -293,6 +293,49 @@ function standardizeErrorNature(value, errorType) {
   return "无法判断";
 }
 
+function extractLastNumericValue(value) {
+  const text = String(value ?? "")
+    .replace(/，/g, ",")
+    .trim();
+
+  if (!text) return null;
+
+  // For a simple final answer such as "64" / "64平方厘米" / "6.5米",
+  // use the last number as the final numeric result.
+  const matches = text.match(/-?(?:\\d+(?:\\.\\d+)?|\\.\\d+)/g);
+  if (!matches || matches.length !== 1) {
+    return null;
+  }
+
+  const number = Number(matches[0]);
+  return Number.isFinite(number) ? number : null;
+}
+
+function compareSimpleRetestAnswers(studentAnswer, correctAnswer) {
+  const studentText = String(studentAnswer ?? "")
+    .trim()
+    .replace(/\\s+/g, "");
+
+  const correctText = String(correctAnswer ?? "")
+    .trim()
+    .replace(/\\s+/g, "");
+
+  if (!studentText || !correctText) return null;
+
+  if (studentText === correctText) {
+    return true;
+  }
+
+  const studentNumber = extractLastNumericValue(studentText);
+  const correctNumber = extractLastNumericValue(correctText);
+
+  if (studentNumber === null || correctNumber === null) {
+    return null;
+  }
+
+  return Math.abs(studentNumber - correctNumber) < 1e-10;
+}
+
 function normalizeResult(result) {
   const errorType =
     standardizeErrorType(result?.error_type);
@@ -687,6 +730,31 @@ async function evaluateRetest(request, env) {
     return jsonResponse(
       { error: "复测题、正确答案和孩子答案都不能为空。" },
       400,
+      request,
+    );
+  }
+
+  // 对单一数值型答案先做本地确定性核验。
+  // 这样可以避免免费模型偶发的 JSON 输出问题影响最基本的复测判断；
+  // 复杂表达、分数、步骤题仍交给 AI 判断。
+  const simpleVerdict = compareSimpleRetestAnswers(
+    studentAnswer,
+    correctAnswer,
+  );
+
+  if (simpleVerdict !== null) {
+    return jsonResponse(
+      {
+        correct: simpleVerdict,
+        error_type: simpleVerdict ? "" : "无法判断",
+        error_nature: simpleVerdict ? "" : "无法判断",
+        analysis: simpleVerdict
+          ? "孩子的最终数值答案与标准答案一致，判定为正确。"
+          : "孩子的最终数值答案与标准答案不一致，判定为未通过；具体错误原因需结合解题过程进一步判断。",
+        knowledge_points: knowledgePoints,
+        model: "local_simple_answer_check",
+      },
+      200,
       request,
     );
   }
