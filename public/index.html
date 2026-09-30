@@ -376,6 +376,32 @@
       font-size: 12px;
     }
 
+    .retention-status {
+      margin-top: 10px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      background: #f8fafc;
+      border: 1px solid #e5e7eb;
+      line-height: 1.6;
+    }
+
+    .retention-status-title {
+      font-weight: 600;
+    }
+
+    .retention-status-detail {
+      margin-top: 3px;
+      color: #475467;
+      font-size: 13px;
+    }
+
+    .retention-status-warning {
+      margin-top: 3px;
+      color: #9a3412;
+      font-size: 13px;
+      font-weight: 600;
+    }
+
     .history-empty {
       color: #667085;
       padding: 10px 0;
@@ -612,11 +638,11 @@
 
     <div class="notice">
 
-      当前是 V0.9.4。
+      当前是 V0.10。
       <br>
       已接入 OpenRouter 免费模型路由，用于错题照片识别与 AI 分析。
       <br>
-      当前已支持基础错题库、知识点标准化统计、能力档案、复测、针对性训练，以及分步骤互动辅导；V0.9.4 新增具体能力环节驱动选题，并修正训练会话独立标识。
+      当前已支持基础错题库、知识点标准化统计、能力档案、复测、针对性训练，以及分步骤互动辅导；V0.10 新增长期保持模型：按间隔复测追踪保持、到期与遗忘风险，并在复测失败后进入恢复流程。
 
     </div>
 
@@ -1256,6 +1282,277 @@
         : null,
       history: matching
     };
+  }
+
+  const RETENTION_INTERVALS_DAYS = [
+    3,
+    7,
+    14,
+    30,
+    60,
+    90
+  ];
+
+  function formatRetentionDate(value) {
+    if (!value) return "";
+
+    const date = new Date(value);
+
+    if (Number.isNaN(date.getTime())) {
+      return "";
+    }
+
+    return date.toLocaleDateString("zh-CN", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit"
+    });
+  }
+
+  function getDaysFromNow(value) {
+    const date = new Date(value || 0);
+
+    if (Number.isNaN(date.getTime())) {
+      return null;
+    }
+
+    return Math.ceil(
+      (date.getTime() - Date.now()) /
+      86400000
+    );
+  }
+
+  function getRetentionState(
+    point,
+    retestHistory,
+    knowledgeState
+  ) {
+    const matching = retestHistory
+      .filter(function (item) {
+        return standardizeKnowledgePoints(
+          item.knowledge_points
+        ).includes(point);
+      })
+      .slice()
+      .sort(function (a, b) {
+        return (
+          new Date(a.created_at || 0) -
+          new Date(b.created_at || 0)
+        );
+      });
+
+    const spacedPassed = matching.filter(function (item) {
+      return (
+        item.test_type === "spaced_retest" &&
+        item.passed === true
+      );
+    });
+
+    const spacedFailed = matching.some(function (item) {
+      return (
+        item.test_type === "spaced_retest" &&
+        item.passed === false
+      );
+    });
+
+    const latestAttempt =
+      matching.length > 0
+        ? matching[matching.length - 1]
+        : null;
+
+    const latestSpacedPassed =
+      spacedPassed.length > 0
+        ? spacedPassed[spacedPassed.length - 1]
+        : null;
+
+    let dueAt = null;
+    let intervalDays = null;
+    let stage = 0;
+
+    if (
+      latestSpacedPassed
+    ) {
+      stage = spacedPassed.length;
+      const nextIndex = Math.min(
+        stage,
+        RETENTION_INTERVALS_DAYS.length - 1
+      );
+      intervalDays =
+        RETENTION_INTERVALS_DAYS[nextIndex];
+
+      dueAt = new Date(
+        new Date(
+          latestSpacedPassed.created_at
+        ).getTime() +
+        intervalDays * 86400000
+      ).toISOString();
+    } else if (
+      knowledgeState.state === "initial_mastery" &&
+      latestAttempt &&
+      latestAttempt.passed === true
+    ) {
+      stage = 0;
+      intervalDays =
+        RETENTION_INTERVALS_DAYS[0];
+
+      dueAt = new Date(
+        new Date(
+          latestAttempt.created_at
+        ).getTime() +
+        intervalDays * 86400000
+      ).toISOString();
+    }
+
+    if (knowledgeState.state === "not_mastered" ||
+        knowledgeState.state === "learning" ||
+        knowledgeState.state === "unstable") {
+      return {
+        state: "building",
+        stateText: "尚未进入长期保持",
+        dueAt: null,
+        intervalDays: null,
+        daysUntilDue: null,
+        spacedPasses: spacedPassed.length,
+        spacedFailures: spacedFailed ? 1 : 0,
+        stage: stage
+      };
+    }
+
+    if (dueAt) {
+      const daysUntilDue =
+        getDaysFromNow(dueAt);
+
+      if (
+        knowledgeState.state === "unstable" ||
+        knowledgeState.state === "recovering"
+      ) {
+        return {
+          state: "recovering",
+          stateText: "恢复中",
+          dueAt: dueAt,
+          intervalDays: intervalDays,
+          daysUntilDue: daysUntilDue,
+          spacedPasses: spacedPassed.length,
+          spacedFailures: spacedFailed ? 1 : 0,
+          stage: stage
+        };
+      }
+
+      if (
+        daysUntilDue !== null &&
+        daysUntilDue > 0
+      ) {
+        return {
+          state: "retaining",
+          stateText: "保持中",
+          dueAt: dueAt,
+          intervalDays: intervalDays,
+          daysUntilDue: daysUntilDue,
+          spacedPasses: spacedPassed.length,
+          spacedFailures: spacedFailed ? 1 : 0,
+          stage: stage
+        };
+      }
+
+      if (
+        daysUntilDue !== null &&
+        daysUntilDue >= -intervalDays
+      ) {
+        return {
+          state: "due",
+          stateText: "到期复测",
+          dueAt: dueAt,
+          intervalDays: intervalDays,
+          daysUntilDue: daysUntilDue,
+          spacedPasses: spacedPassed.length,
+          spacedFailures: spacedFailed ? 1 : 0,
+          stage: stage
+        };
+      }
+
+      return {
+        state: "risk",
+        stateText: "遗忘风险",
+        dueAt: dueAt,
+        intervalDays: intervalDays,
+        daysUntilDue: daysUntilDue,
+        spacedPasses: spacedPassed.length,
+        spacedFailures: spacedFailed ? 1 : 0,
+        stage: stage
+      };
+    }
+
+    return {
+      state: "building",
+      stateText: "尚未进入长期保持",
+      dueAt: null,
+      intervalDays: null,
+      daysUntilDue: null,
+      spacedPasses: spacedPassed.length,
+      spacedFailures: spacedFailed ? 1 : 0,
+      stage: stage
+    };
+  }
+
+  function renderRetentionStatus(point, retention) {
+    const wrapper =
+      document.createElement("div");
+    wrapper.className =
+      "retention-status";
+
+    const title =
+      document.createElement("div");
+    title.className =
+      "retention-status-title";
+    title.textContent =
+      "🧠 长期保持：" +
+      retention.stateText;
+
+    const detail =
+      document.createElement("div");
+    detail.className =
+      "retention-status-detail";
+
+    if (retention.state === "retaining") {
+      detail.textContent =
+        "下次间隔复测：" +
+        formatRetentionDate(retention.dueAt) +
+        "（约" +
+        retention.daysUntilDue +
+        "天后）";
+    } else if (retention.state === "due") {
+      detail.textContent =
+        "已经到达下一次复测时间：" +
+        formatRetentionDate(retention.dueAt) +
+        "。建议现在进行一次新的同类变式复测。";
+    } else if (retention.state === "risk") {
+      detail.textContent =
+        "已经超过计划复测时间；这只表示“遗忘风险”，还不直接认定已经遗忘。需要通过复测结果确认。";
+      const warning =
+        document.createElement("div");
+      warning.className =
+        "retention-status-warning";
+      warning.textContent =
+        "超过计划时间约" +
+        Math.abs(
+          retention.daysUntilDue || 0
+        ) +
+        "天";
+      wrapper.appendChild(title);
+      wrapper.appendChild(detail);
+      wrapper.appendChild(warning);
+      return wrapper;
+    } else if (retention.state === "recovering") {
+      detail.textContent =
+        "最近出现过需要恢复的证据；后续继续用间隔复测确认能否重新稳定保持。";
+    } else if (retention.state === "building") {
+      detail.textContent =
+        "先完成基础掌握，再进入3天、7天、14天、30天……的间隔保持阶段。";
+    }
+
+    wrapper.appendChild(title);
+    wrapper.appendChild(detail);
+    return wrapper;
   }
 
   function getKnowledgeState(point, history, retestHistory) {
@@ -4169,6 +4466,13 @@
         retestStats.consecutiveCorrect;
       statsMap[point].lastAttempt =
         retestStats.lastAttempt;
+
+      statsMap[point].retention =
+        getRetentionState(
+          point,
+          retestHistory,
+          knowledgeState
+        );
     });
 
     const entries = Object.entries(statsMap)
@@ -4271,7 +4575,13 @@
           "建议：继续保持，下一次安排间隔复测。";
       } else if (stats.state === "mastered") {
         action.textContent =
-          "建议：已通过间隔复测，后续只需定期抽查。";
+          stats.retention &&
+          (
+            stats.retention.state === "due" ||
+            stats.retention.state === "risk"
+          )
+            ? "建议：进入保持复测时间，检查知识是否仍能独立保持。"
+            : "建议：已通过间隔复测，按计划继续保持。";
       }
 
       const status = document.createElement("div");
@@ -4297,6 +4607,15 @@
 
       if (abilityMap) {
         item.appendChild(abilityMap);
+      }
+
+      if (stats.retention) {
+        item.appendChild(
+          renderRetentionStatus(
+            point,
+            stats.retention
+          )
+        );
       }
 
       const shouldShowTrainingButton =
@@ -4329,8 +4648,17 @@
       }
 
       const shouldShowRetestButton =
-        stats.state !== "mastered" &&
         stats.state !== "observed" &&
+        (
+          stats.state !== "mastered" ||
+          (
+            stats.retention &&
+            (
+              stats.retention.state === "due" ||
+              stats.retention.state === "risk"
+            )
+          )
+        ) &&
         (
           stats.knowledge_errors >= 1 ||
           stats.retest_attempts >= 1
@@ -4351,6 +4679,27 @@
             : null;
 
         if (
+          stats.state === "mastered" &&
+          stats.retention &&
+          (
+            stats.retention.state === "due" ||
+            stats.retention.state === "risk"
+          )
+        ) {
+          retestButton.textContent =
+            stats.retention.state === "risk"
+              ? "⚠️ 生成保持复测题"
+              : "生成保持复测题";
+
+          retestButton.addEventListener(
+            "click",
+            function () {
+              showRetestPanel(point, {
+                forceSpaced: true
+              });
+            }
+          );
+        } else if (
           stats.state === "initial_mastery" &&
           daysSinceLast !== null &&
           daysSinceLast < 3
@@ -4393,7 +4742,15 @@
 
         if (
           stats.state === "initial_mastery" ||
-          stats.state === "recovering"
+          stats.state === "recovering" ||
+          (
+            stats.state === "mastered" &&
+            stats.retention &&
+            (
+              stats.retention.state === "due" ||
+              stats.retention.state === "risk"
+            )
+          )
         ) {
           const testButton =
             document.createElement("button");
