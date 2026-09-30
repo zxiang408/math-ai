@@ -782,6 +782,171 @@
 
   let activeRetest = null;
 
+  function generateLocalRetest(point) {
+    function randInt(min, max) {
+      return Math.floor(Math.random() * (max - min + 1)) + min;
+    }
+
+    if (point === "图形与几何 / 正方形面积") {
+      const side = randInt(3, 12);
+      return {
+        question:
+          "一个正方形的边长是" + side +
+          "厘米，这个正方形的面积是多少平方厘米？",
+        correct_answer: String(side * side) + "平方厘米",
+        knowledge_points: [point],
+        explanation:
+          "正方形的面积等于边长乘边长，" +
+          side + "×" + side + "=" + (side * side) + "。",
+        model: "local_fast_template"
+      };
+    }
+
+    if (point === "图形与几何 / 长方形面积") {
+      const length = randInt(5, 15);
+      const width = randInt(3, 10);
+      return {
+        question:
+          "一个长方形的长是" + length +
+          "厘米，宽是" + width +
+          "厘米，这个长方形的面积是多少平方厘米？",
+        correct_answer: String(length * width) + "平方厘米",
+        knowledge_points: [point],
+        explanation:
+          "长方形的面积等于长乘宽，" +
+          length + "×" + width + "=" + (length * width) + "。",
+        model: "local_fast_template"
+      };
+    }
+
+    if (point === "数与代数 / 积的变化规律") {
+      const factor = randInt(2, 6);
+      return {
+        question:
+          "一个乘法算式中，如果一个因数不变，另一个因数扩大" +
+          factor + "倍，那么积扩大多少倍？",
+        correct_answer: String(factor) + "倍",
+        knowledge_points: [point],
+        explanation:
+          "一个因数不变，另一个因数扩大" + factor +
+          "倍，积也扩大" + factor + "倍。",
+        model: "local_fast_template"
+      };
+    }
+
+    if (point === "数与代数 / 倍数关系") {
+      const small = randInt(6, 15);
+      const multiple = randInt(2, 6);
+      const large = small * multiple;
+      const sum = small + large;
+      return {
+        question:
+          "一个数是另一个数的" + multiple +
+          "倍。如果这两个数的和是" + sum +
+          "，较小的数是多少？",
+        correct_answer: String(small),
+        knowledge_points: [point],
+        explanation:
+          "设较小的数为x，较大的数就是" + multiple +
+          "x，所以（1+" + multiple + "）x=" + sum +
+          "，得到x=" + small + "。",
+        model: "local_fast_template"
+      };
+    }
+
+    if (point === "数与代数 / 四则运算") {
+      const a = randInt(20, 90);
+      const b = randInt(2, 9);
+      const c = randInt(3, 12);
+      const result = a + b * c;
+      return {
+        question: "计算：" + a + "＋" + b + "×" + c + "＝？",
+        correct_answer: String(result),
+        knowledge_points: [point],
+        explanation:
+          "先算乘法：" + b + "×" + c + "=" + (b * c) +
+          "，再算加法：" + a + "＋" + (b * c) + "=" + result + "。",
+        model: "local_fast_template"
+      };
+    }
+
+    if (point === "数与代数 / 小数") {
+      const a = (randInt(12, 45) / 10).toFixed(1);
+      const b = (randInt(10, 35) / 10).toFixed(1);
+      const result = (Number(a) + Number(b))
+        .toFixed(1)
+        .replace(/\.0$/, "");
+      return {
+        question: "计算：" + a + "＋" + b + "＝？",
+        correct_answer: result,
+        knowledge_points: [point],
+        explanation:
+          "把小数点对齐后相加，结果是" + result + "。",
+        model: "local_fast_template"
+      };
+    }
+
+    if (point === "数与代数 / 比与比例") {
+      const unit = randInt(3, 8);
+      const first = unit * 2;
+      const second = unit * 3;
+      const target = second * 2;
+      return {
+        question:
+          "如果甲、乙两数的比是" + first + ":" + second +
+          "，当甲是" + (first * 2) + "时，乙是多少？",
+        correct_answer: String(target),
+        knowledge_points: [point],
+        explanation:
+          first + "变成" + (first * 2) +
+          "扩大2倍，乙也扩大2倍，因此乙为" + target + "。",
+        model: "local_fast_template"
+      };
+    }
+
+    return null;
+  }
+
+  function extractSingleNumber(value) {
+    const text = String(value || "")
+      .trim()
+      .replace(/\s+/g, "");
+
+    if (!text) return null;
+
+    const matches = text.match(/-?(?:\d+(?:\.\d+)?|\.\d+)/g);
+
+    if (!matches || matches.length !== 1) {
+      return null;
+    }
+
+    const number = Number(matches[0]);
+    return Number.isFinite(number) ? number : null;
+  }
+
+  function compareSimpleRetestAnswers(studentAnswer, correctAnswer) {
+    const studentText = String(studentAnswer || "")
+      .trim()
+      .replace(/\s+/g, "");
+
+    const correctText = String(correctAnswer || "")
+      .trim()
+      .replace(/\s+/g, "");
+
+    if (!studentText || !correctText) return null;
+
+    if (studentText === correctText) return true;
+
+    const studentNumber = extractSingleNumber(studentText);
+    const correctNumber = extractSingleNumber(correctText);
+
+    if (studentNumber === null || correctNumber === null) {
+      return null;
+    }
+
+    return Math.abs(studentNumber - correctNumber) < 1e-10;
+  }
+
   function loadRetestHistory() {
     try {
       const raw = localStorage.getItem(RETEST_KEY);
@@ -960,6 +1125,34 @@
       block: "start"
     });
 
+    // 常见知识点优先在浏览器本地瞬间出题，避免等待网络/AI。
+    const localRetest = generateLocalRetest(point);
+
+    if (localRetest) {
+      setTimeout(function () {
+        activeRetest = {
+          knowledge_point: point,
+          question: localRetest.question,
+          correct_answer: localRetest.correct_answer,
+          knowledge_points: localRetest.knowledge_points,
+          explanation: localRetest.explanation || "",
+          forceSpaced: forceSpaced
+        };
+
+        retestStatus.textContent =
+          "题目已生成，请让孩子独立完成。";
+
+        retestQuestion.textContent =
+          activeRetest.question;
+
+        retestAnswer.disabled = false;
+        submitRetestButton.disabled = false;
+        retestAnswer.focus();
+      }, 0);
+
+      return;
+    }
+
     fetch("/api/retest/generate", {
       method: "POST",
       headers: {
@@ -1025,6 +1218,74 @@
       retestStatus.textContent =
         "请先输入孩子的答案。";
       retestAnswer.focus();
+      return;
+    }
+
+    // 简单单值答案直接本地核验，不调用 AI。
+    const simpleVerdict = compareSimpleRetestAnswers(
+      studentAnswer,
+      activeRetest.correct_answer
+    );
+
+    if (simpleVerdict !== null) {
+      const attempt = {
+        id:
+          String(Date.now()) +
+          "-" +
+          Math.random().toString(36).slice(2, 8),
+        created_at:
+          new Date().toISOString(),
+        knowledge_points:
+          activeRetest.knowledge_points,
+        question:
+          activeRetest.question,
+        correct_answer:
+          activeRetest.correct_answer,
+        student_answer:
+          studentAnswer,
+        passed:
+          simpleVerdict,
+        test_type:
+          activeRetest.forceSpaced
+            ? "spaced_retest"
+            : "retest",
+        error_type:
+          simpleVerdict ? "" : "无法判断",
+        error_nature:
+          simpleVerdict ? "" : "无法判断",
+        analysis:
+          simpleVerdict
+            ? "孩子的最终答案与标准答案一致，判定为正确。"
+            : "孩子的最终答案与标准答案不一致，判定为未通过；这一步只核对最终答案，不对错误原因作进一步猜测。",
+        explanation:
+          activeRetest.explanation || ""
+      };
+
+      saveRetestAttempt(attempt);
+
+      retestResult.style.display = "block";
+
+      if (attempt.passed) {
+        retestResult.textContent =
+          "✅ 回答正确！这次复测已经通过。" +
+          (attempt.explanation
+            ? " 正确思路：" + attempt.explanation
+            : "");
+        retestStatus.textContent =
+          "复测完成。";
+      } else {
+        retestResult.textContent =
+          "❌ 这次复测没有通过。" +
+          " 孩子的最终答案与标准答案不一致。" +
+          " 正确答案：" +
+          attempt.correct_answer;
+        retestStatus.textContent =
+          "复测结果已记录，能力档案会据此更新。";
+      }
+
+      retestAnswer.disabled = true;
+      submitRetestButton.disabled = true;
+      renderHistory();
       return;
     }
 
