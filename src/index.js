@@ -214,7 +214,47 @@ confidence 为 0 到 1 之间的小数，表示你对整道题识别与分析的
           model: "qwen/qwen3.8-27b:free",
           temperature: 0.2,
           max_tokens: 800,
-          response_format: { type: "json_object" },
+          reasoning: { enabled: false },
+          tools: [
+            {
+              type: "function",
+              function: {
+                name: "analyze_math_problem",
+                description: "Return the structured analysis of the uploaded primary-school math problem.",
+                parameters: {
+                  type: "object",
+                  properties: {
+                    question: { type: "string", description: "题目原文或尽可能准确的识别结果" },
+                    student_answer: { type: "string", description: "孩子写出的答案；无法确认时写无法确认" },
+                    correct_answer: { type: "string", description: "正确答案；无法可靠计算或确认时写无法确认" },
+                    knowledge_points: {
+                      type: "array",
+                      items: { type: "string" },
+                      description: "主要小学数学知识点"
+                    },
+                    error_type: { type: "string", description: "错误类型" },
+                    analysis: { type: "string", description: "简明说明错误原因和应该检查什么" },
+                    confidence: { type: "number", description: "0到1之间的识别与分析把握度" },
+                    unclear: { type: "boolean", description: "图片是否存在影响可靠分析的模糊内容" }
+                  },
+                  required: [
+                    "question",
+                    "student_answer",
+                    "correct_answer",
+                    "knowledge_points",
+                    "error_type",
+                    "analysis",
+                    "confidence",
+                    "unclear"
+                  ]
+                }
+              }
+            }
+          ],
+          tool_choice: {
+            type: "function",
+            function: { name: "analyze_math_problem" }
+          },
           messages: [
           {
             role: "user",
@@ -286,16 +326,40 @@ confidence 为 0 到 1 之间的小数，表示你对整道题识别与分析的
     );
   }
 
-  const content = upstreamBody?.choices?.[0]?.message?.content;
+  const message = upstreamBody?.choices?.[0]?.message;
+
+  const toolCall = Array.isArray(message?.tool_calls)
+    ? message.tool_calls.find(
+        (call) =>
+          call?.type === "function" &&
+          call?.function?.name === "analyze_math_problem",
+      )
+    : null;
+
+  if (toolCall?.function?.arguments) {
+    try {
+      const parsedArgs = JSON.parse(toolCall.function.arguments);
+      return jsonResponse(normalizeResult(parsedArgs), 200, request);
+    } catch (_) {
+      return jsonResponse(
+        {
+          error: "AI 工具调用返回的数据不是有效 JSON。",
+          raw_preview: String(toolCall.function.arguments).slice(0, 800),
+        },
+        502,
+        request,
+      );
+    }
+  }
+
+  const content = message?.content;
   const parsed = extractJson(content);
 
   if (!parsed) {
-    const preview = contentToText(content).slice(0, 800);
-
     return jsonResponse(
       {
-        error: "AI 返回的内容无法解析为 JSON。",
-        raw_preview: preview,
+        error: "AI 没有返回可用的结构化分析结果。",
+        raw_preview: contentToText(content).slice(0, 800),
       },
       502,
       request,
