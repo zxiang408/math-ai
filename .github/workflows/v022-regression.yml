@@ -1,0 +1,36 @@
+name: V0.22 Regression
+
+on:
+  push:
+    paths:
+      - "public/index.html"
+      - "public/learning-model.js"
+      - "public/learning-model-browser.js"
+      - "tests/v022-regression.spec.mjs"
+      - ".github/workflows/v022-regression.yml"
+  workflow_dispatch:
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Playwright
+        run: npm install --no-save playwright
+
+      - name: Start static server
+        run: |
+          python3 -m http.server 4173 --directory public > /tmp/math-ai-http.log 2>&1 &
+          echo $! > /tmp/math-ai-http.pid
+
+      - name: Run V0.22 regression
+        env:
+          TEST_URL: http://127.0.0.1:4173/index.html
+        run: node tests/v022-regression.spec.mjs
