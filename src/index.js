@@ -1,4 +1,4 @@
-const APP_VERSION = "V0.4.1";
+const APP_VERSION = "V0.4.2";
 
 const JSON_HEADERS = {
   "Content-Type": "application/json; charset=UTF-8",
@@ -332,10 +332,10 @@ async function requestStructuredJson(env, prompt, functionName, properties, requ
           "X-Title": "小学数学 AI",
         },
         body: JSON.stringify({
+          // Retest structured endpoints use a non-reasoning model to avoid
+          // upstream errors when a fallback reasoning model is selected.
           models: [
             "qwen/qwen3.8-27b:free",
-            "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
-            "openrouter/free",
           ],
           temperature: 0.2,
           max_tokens: 1200,
