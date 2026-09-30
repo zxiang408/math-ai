@@ -1430,6 +1430,15 @@ confidence 为 0 到 1 之间的小数，表示你对整道题识别与分析的
   const providers = getAIProviders(env);
   const failures = [];
 
+  function makeJsonObjectFallbackBody(body) {
+    return {
+      ...body,
+      response_format: {
+        type: "json_object",
+      },
+    };
+  }
+
   const baseBody = {
     temperature: 0.2,
     max_tokens: 1800,
@@ -1509,11 +1518,25 @@ confidence 为 0 到 1 之间的小数，表示你对整道题识别与分析的
     ],
   };
   for (const provider of providers) {
-    const result = await fetchAIProvider(
+    let result = await fetchAIProvider(
       provider,
       baseBody,
       30000,
     );
+
+    // Groq supports JSON Schema, but use JSON Object mode as a compatibility
+    // fallback when the strict schema request is rejected.
+    if (
+      !result.ok &&
+      provider.name === "groq" &&
+      [400, 422].includes(result.status)
+    ) {
+      result = await fetchAIProvider(
+        provider,
+        makeJsonObjectFallbackBody(baseBody),
+        30000,
+      );
+    }
 
     if (!result.ok) {
       failures.push({
@@ -1576,7 +1599,20 @@ confidence 为 0 到 1 之间的小数，表示你对整道题识别与分析的
 
   return jsonResponse(
     {
-      error: "所有已配置的 AI 服务都没有返回可用的分析结果。",
+      error:
+        "所有已配置的 AI 服务都没有返回可用的分析结果。" +
+        (failures.length
+          ? " 详细原因：" +
+            failures
+              .map(function (item) {
+                return (
+                  item.provider +
+                  "：" +
+                  (item.reason || ("HTTP " + item.status))
+                );
+              })
+              .join("；")
+          : ""),
       code: "ANALYZE_ALL_PROVIDERS_FAILED",
       failures: failures,
     },
