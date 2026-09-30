@@ -3,7 +3,7 @@ import {
   extractSingleNumericValue
 } from "../public/math-engine.js";
 
-const APP_VERSION = "V0.17.0";
+const APP_VERSION = "V0.18.0";
 
 const JSON_HEADERS = {
   "Content-Type": "application/json; charset=UTF-8",
@@ -334,209 +334,297 @@ function normalizeResult(result) {
   };
 }
 
-async function requestStructuredJson(env, prompt, functionName, properties, required) {
-  async function doRequest(useStructuredFormat) {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 20000);
 
-    try {
-      const requestBody = {
-        // Prefer Qwen free, then allow OpenRouter's free-model router
-        // to select another compatible free model if the preferred route
-        // is temporarily unavailable.
-        models: [
-          "qwen/qwen3.8-27b:free",
-          "openrouter/free",
-        ],
-        provider: {
-          require_parameters: true,
-          allow_fallbacks: true,
-        },
-        temperature: 0.2,
-        max_tokens: 700,
-        messages: [
-          {
-            role: "user",
-            content: prompt,
-          },
-        ],
-      };
+function getAIProviders(env) {
+  const providers = [];
 
-      // First try the stronger JSON Schema constraint.
-      // Some free-model/provider combinations may ignore it or fail to
-      // return parsable structured output, so the caller can retry without
-      // this field when necessary.
-      if (useStructuredFormat) {
-        requestBody.response_format = {
-          type: "json_schema",
-          json_schema: {
-            name: functionName,
-            strict: true,
-            schema: {
-              type: "object",
-              properties,
-              required,
-              additionalProperties: false,
-            },
-          },
-        };
-      }
+  if (env?.GROQ_API_KEY) {
+    providers.push({
+      name: "groq",
+      apiKey: env.GROQ_API_KEY,
+      url: "https://api.groq.com/openai/v1/chat/completions",
+      model: "qwen/qwen3.8-27b",
+    });
+  }
 
-      const response = await fetch(
-        "https://openrouter.ai/api/v1/chat/completions",
-        {
-          method: "POST",
-          headers: {
-            "Authorization": `Bearer ${env.OPENROUTER_API_KEY}`,
-            "Content-Type": "application/json",
-            "HTTP-Referer": "https://math-ai.zxiang88688.workers.dev",
-            "X-Title": "小学数学 AI",
-          },
-          body: JSON.stringify(requestBody),
-          signal: controller.signal,
-        },
-      );
+  if (env?.OPENROUTER_API_KEY) {
+    providers.push({
+      name: "openrouter",
+      apiKey: env.OPENROUTER_API_KEY,
+      url: "https://openrouter.ai/api/v1/chat/completions",
+      models: [
+        "qwen/qwen3.8-27b:free",
+        "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+        "openrouter/free",
+      ],
+    });
+  }
 
-      let body;
-      try {
-        body = await response.json();
-      } catch (_) {
-        return {
-          ok: false,
-          status: 502,
-          retryable: false,
-          data: {
-            error: `OpenRouter 返回了无法解析的响应（HTTP ${response.status}）。`,
-          },
-        };
-      }
+  return providers;
+}
 
-      if (!response.ok) {
-        const errorObject = body?.error || {};
-        return {
-          ok: false,
-          status: 502,
-          retryable: useStructuredFormat && [400, 422].includes(response.status),
-          data: {
-            error:
-              errorObject?.message ||
-              body?.message ||
-              "OpenRouter 请求失败。",
-            upstream_status: response.status,
-            upstream_code: errorObject?.code ?? null,
-            upstream_metadata:
-              errorObject?.metadata ?? body?.metadata ?? null,
-          },
-        };
-      }
+function buildAIRequestBody(provider, baseBody) {
+  const body = { ...baseBody };
 
-      const message = body?.choices?.[0]?.message;
+  if (provider.name === "groq") {
+    body.model = provider.model;
+    delete body.models;
+    delete body.provider;
 
-      const toolCall = Array.isArray(message?.tool_calls)
-        ? message.tool_calls.find(
-            (call) =>
-              call?.type === "function" &&
-              call?.function?.name === functionName,
-          )
-        : null;
-
-      let parsed = null;
-
-      // Preferred path: the model used the requested function/tool call.
-      if (toolCall?.function?.arguments) {
-        try {
-          parsed = JSON.parse(
-            toolCall.function.arguments
-          );
-        } catch (_) {
-          parsed = extractJson(
-            toolCall.function.arguments
-          );
-        }
-      }
-
-      // Compatibility path: some free models return the same JSON
-      // directly in message.content instead of using the tool call.
-      if (!parsed) {
-        parsed = extractJson(message?.content);
-      }
-
-      const rawText = contentToText(
-        toolCall?.function?.arguments ||
-        message?.content
-      );
-
-      if (!parsed) {
-        return {
-          ok: false,
-          status: 502,
-          retryable: useStructuredFormat,
-          data: {
-            error: "AI 返回了内容，但无法解析为有效的结构化 JSON。",
-            raw_preview: rawText.slice(0, 1200),
-          },
-        };
-      }
-
-      return {
-        ok: true,
-        status: 200,
-        data: parsed,
-        model: body?.model ?? null,
-      };
-    } catch (error) {
-      if (error?.name === "AbortError") {
-        return {
-          ok: false,
-          status: 504,
-          retryable: false,
-          data: {
-            error: "AI 服务响应超时（20 秒）。免费模型当前可能繁忙，请稍后再试。",
-            code: "OPENROUTER_TIMEOUT",
-          },
-        };
-      }
-
-      return {
-        ok: false,
-        status: 502,
-        retryable: false,
-        data: {
-          error:
-            "连接 OpenRouter 失败：" +
-            (error?.message || "未知网络错误"),
-          code: "OPENROUTER_NETWORK_ERROR",
-        },
-      };
-    } finally {
-      clearTimeout(timeoutId);
+    // Groq uses reasoning_effort rather than OpenRouter's reasoning object.
+    if (body.reasoning && typeof body.reasoning === "object") {
+      delete body.reasoning;
+      body.reasoning_effort = "none";
+    }
+  } else {
+    delete body.model;
+    if (!body.models) {
+      body.models = provider.models;
     }
   }
 
-  const first = await doRequest(true);
+  return body;
+}
 
-  // Free models are not always consistent about structured-output
-  // compliance. If the schema-constrained call fails at the formatting
-  // layer, retry once with a plain JSON request. The prompt still requires
-  // a single legal JSON object, and extractJson() handles common wrappers.
-  if (!first.ok && first.retryable) {
-    const second = await doRequest(false);
+async function fetchAIProvider(provider, baseBody, timeoutMs = 20000) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
-    if (second.ok) {
-      return second;
+  try {
+    const headers = {
+      "Authorization": "Bearer " + provider.apiKey,
+      "Content-Type": "application/json",
+    };
+
+    if (provider.name === "openrouter") {
+      headers["HTTP-Referer"] = "https://math-ai.zxiang88688.workers.dev";
+      headers["X-Title"] = "小学数学 AI";
+    }
+
+    const response = await fetch(provider.url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(buildAIRequestBody(provider, baseBody)),
+      signal: controller.signal,
+    });
+
+    let body;
+    try {
+      body = await response.json();
+    } catch (_) {
+      return {
+        ok: false,
+        status: response.status,
+        provider: provider.name,
+        body: null,
+        reason: "上游返回无法解析的 JSON。",
+      };
+    }
+
+    if (!response.ok) {
+      return {
+        ok: false,
+        status: response.status,
+        provider: provider.name,
+        body,
+        reason:
+          body?.error?.message ||
+          body?.message ||
+          ("HTTP " + response.status),
+      };
     }
 
     return {
-      ...second,
+      ok: true,
+      status: response.status,
+      provider: provider.name,
+      body,
+      reason: null,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      status: error?.name === "AbortError" ? 504 : 502,
+      provider: provider.name,
+      body: null,
+      reason:
+        error?.name === "AbortError"
+          ? "响应超时。"
+          : error?.message || "网络错误。",
+    };
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function requestStructuredJson(env, prompt, functionName, properties, required) {
+  const providers = getAIProviders(env);
+
+  if (!providers.length) {
+    return {
+      ok: false,
+      status: 500,
       data: {
-        ...second.data,
-        first_attempt_error: first.data?.error || null,
-        first_attempt_preview: first.data?.raw_preview || null,
+        error: "服务器尚未配置 GROQ_API_KEY 或 OPENROUTER_API_KEY。",
+        code: "AI_PROVIDER_NOT_CONFIGURED",
       },
     };
   }
 
-  return first;
+  async function doRequest(provider, useStructuredFormat) {
+    const baseBody = {
+      temperature: 0.2,
+      max_tokens: 700,
+      messages: [
+        {
+          role: "user",
+          content: prompt,
+        },
+      ],
+    };
+
+    if (useStructuredFormat) {
+      baseBody.response_format = {
+        type: "json_schema",
+        json_schema: {
+          name: functionName,
+          strict: true,
+          schema: {
+            type: "object",
+            properties,
+            required,
+            additionalProperties: false,
+          },
+        },
+      };
+    }
+
+    const result = await fetchAIProvider(
+      provider,
+      baseBody,
+      provider.name === "groq" ? 20000 : 20000,
+    );
+
+    if (!result.ok) {
+      return {
+        ok: false,
+        status: result.status === 429 ? 429 : 502,
+        retryable:
+          useStructuredFormat &&
+          [400, 422].includes(result.status),
+        data: {
+          error:
+            result.reason ||
+            (provider.name === "groq"
+              ? "Groq 请求失败。"
+              : "OpenRouter 请求失败。"),
+          provider: provider.name,
+          upstream_status: result.status,
+          upstream_code: result.body?.error?.code ?? null,
+          upstream_metadata:
+            result.body?.error?.metadata ??
+            result.body?.metadata ??
+            null,
+        },
+      };
+    }
+
+    const message = result.body?.choices?.[0]?.message;
+
+    const toolCall = Array.isArray(message?.tool_calls)
+      ? message.tool_calls.find(
+          (call) =>
+            call?.type === "function" &&
+            call?.function?.name === functionName,
+        )
+      : null;
+
+    let parsed = null;
+
+    if (toolCall?.function?.arguments) {
+      try {
+        parsed = JSON.parse(toolCall.function.arguments);
+      } catch (_) {
+        parsed = extractJson(toolCall.function.arguments);
+      }
+    }
+
+    if (!parsed) {
+      parsed = extractJson(message?.content);
+    }
+
+    const rawText = contentToText(
+      toolCall?.function?.arguments ||
+      message?.content,
+    );
+
+    if (!parsed) {
+      return {
+        ok: false,
+        status: 502,
+        retryable: useStructuredFormat,
+        data: {
+          error: "AI 返回了内容，但无法解析为有效的结构化 JSON。",
+          provider: provider.name,
+          raw_preview: rawText.slice(0, 1200),
+        },
+      };
+    }
+
+    return {
+      ok: true,
+      status: 200,
+      data: parsed,
+      model: result.body?.model ?? provider.model ?? provider.name,
+    };
+  }
+
+  const failures = [];
+
+  for (const provider of providers) {
+    const first = await doRequest(provider, true);
+
+    if (first.ok) {
+      return first;
+    }
+
+    if (first.retryable) {
+      const second = await doRequest(provider, false);
+
+      if (second.ok) {
+        return second;
+      }
+
+      failures.push({
+        provider: provider.name,
+        first_error: first.data,
+        second_error: second.data,
+      });
+      continue;
+    }
+
+    failures.push({
+      provider: provider.name,
+      error: first.data,
+    });
+  }
+
+  return {
+    ok: false,
+    status: failures.some(
+      (item) =>
+        item?.error?.upstream_status === 429 ||
+        item?.first_error?.upstream_status === 429 ||
+        item?.second_error?.upstream_status === 429,
+    )
+      ? 429
+      : 502,
+    data: {
+      error: "所有已配置的 AI 服务都未返回可用结果。",
+      code: "ALL_AI_PROVIDERS_FAILED",
+      failures,
+    },
+  };
 }
 
 function generateFastRetest(knowledgePoint) {
@@ -657,9 +745,9 @@ async function generateRetest(request, env) {
     return jsonResponse({ error: "只支持 POST 请求。" }, 405, request);
   }
 
-  if (!env.OPENROUTER_API_KEY) {
+  if (!env.GROQ_API_KEY && !env.OPENROUTER_API_KEY) {
     return jsonResponse(
-      { error: "服务器尚未配置 OPENROUTER_API_KEY。" },
+      { error: "服务器尚未配置 GROQ_API_KEY 或 OPENROUTER_API_KEY。" },
       500,
       request,
     );
@@ -786,9 +874,9 @@ async function evaluateRetest(request, env) {
     return jsonResponse({ error: "只支持 POST 请求。" }, 405, request);
   }
 
-  if (!env.OPENROUTER_API_KEY) {
+  if (!env.GROQ_API_KEY && !env.OPENROUTER_API_KEY) {
     return jsonResponse(
-      { error: "服务器尚未配置 OPENROUTER_API_KEY。" },
+      { error: "服务器尚未配置 GROQ_API_KEY 或 OPENROUTER_API_KEY。" },
       500,
       request,
     );
@@ -943,9 +1031,9 @@ async function tutorStep(request, env) {
     return jsonResponse({ error: "只支持 POST 请求。" }, 405, request);
   }
 
-  if (!env.OPENROUTER_API_KEY) {
+  if (!env.GROQ_API_KEY && !env.OPENROUTER_API_KEY) {
     return jsonResponse(
-      { error: "服务器尚未配置 OPENROUTER_API_KEY。" },
+      { error: "服务器尚未配置 GROQ_API_KEY 或 OPENROUTER_API_KEY。" },
       500,
       request,
     );
@@ -1043,100 +1131,72 @@ action 只能是：
 advance / retry / simplify / finish
 `;
 
-  const modelCandidates = [
-    "qwen/qwen3.8-27b:free",
-    "openrouter/free",
-  ];
+  const providers = getAIProviders(env);
 
-  async function callTutorModel(model) {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(
-      () => controller.abort(),
-      model === "qwen/qwen3.8-27b:free" ? 9000 : 9000,
+  if (!providers.length) {
+    return jsonResponse(
+      {
+        enabled: false,
+        error: "服务器尚未配置 AI Provider。",
+        code: "AI_PROVIDER_NOT_CONFIGURED",
+      },
+      500,
+      request,
+    );
+  }
+
+  async function callTutorProvider(provider) {
+    const baseBody = {
+      temperature: 0.2,
+      max_tokens: 450,
+      reasoning: { enabled: false },
+      messages: [
+        {
+          role: "user",
+          content: prompt,
+        },
+      ],
+    };
+
+    const result = await fetchAIProvider(
+      provider,
+      baseBody,
+      9000,
     );
 
-    try {
-      const response = await fetch(
-        "https://openrouter.ai/api/v1/chat/completions",
-        {
-          method: "POST",
-          headers: {
-            "Authorization": `Bearer ${env.OPENROUTER_API_KEY}`,
-            "Content-Type": "application/json",
-            "HTTP-Referer": "https://math-ai.zxiang88688.workers.dev",
-            "X-Title": "小学数学 AI Tutor",
-          },
-          body: JSON.stringify({
-            model: model,
-            temperature: 0.2,
-            max_tokens: 450,
-            reasoning: { enabled: false },
-            messages: [
-              {
-                role: "user",
-                content: prompt,
-              },
-            ],
-          }),
-          signal: controller.signal,
-        },
-      );
-
-      let body;
-      try {
-        body = await response.json();
-      } catch (_) {
-        return {
-          ok: false,
-          reason: "上游返回无法解析的 JSON。",
-        };
-      }
-
-      if (!response.ok) {
-        return {
-          ok: false,
-          reason:
-            body?.error?.message ||
-            body?.message ||
-            `HTTP ${response.status}`,
-        };
-      }
-
-      const message = body?.choices?.[0]?.message;
-      const parsed = extractJson(
-        contentToText(message?.content),
-      );
-
-      if (!parsed) {
-        return {
-          ok: false,
-          reason: "模型返回内容无法解析为 JSON。",
-        };
-      }
-
-      return {
-        ok: true,
-        data: parsed,
-        model: body?.model || model,
-      };
-    } catch (error) {
+    if (!result.ok) {
       return {
         ok: false,
         reason:
-          error?.name === "AbortError"
-            ? "响应超时。"
-            : error?.message || "网络错误。",
+          (provider.name === "groq" ? "Groq：" : "OpenRouter：") +
+          (result.reason || ("HTTP " + result.status)),
       };
-    } finally {
-      clearTimeout(timeoutId);
     }
+
+    const message = result.body?.choices?.[0]?.message;
+    const parsed = extractJson(contentToText(message?.content));
+
+    if (!parsed) {
+      return {
+        ok: false,
+        reason:
+          (provider.name === "groq" ? "Groq：" : "OpenRouter：") +
+          "模型返回内容无法解析为 JSON。",
+      };
+    }
+
+    return {
+      ok: true,
+      data: parsed,
+      model: result.body?.model || provider.model || provider.name,
+    };
   }
 
   let result = null;
   const failures = [];
 
-  for (const model of modelCandidates) {
-    const attempt = await callTutorModel(model);
+  for (const provider of providers) {
+    const attempt = await callTutorProvider(provider);
 
     if (attempt.ok) {
       result = attempt;
@@ -1144,7 +1204,7 @@ advance / retry / simplify / finish
     }
 
     failures.push({
-      model: model,
+      provider: provider.name,
       reason: attempt.reason,
     });
   }
@@ -1153,8 +1213,8 @@ advance / retry / simplify / finish
     return jsonResponse(
       {
         enabled: false,
-        error: "AI Tutor 两个免费模型都没有返回可用结果。",
-        code: "TUTOR_ALL_MODELS_FAILED",
+        error: "所有已配置的 AI Tutor 服务都没有返回可用结果。",
+        code: "TUTOR_ALL_PROVIDERS_FAILED",
         failures: failures,
       },
       502,
@@ -1266,6 +1326,7 @@ advance / retry / simplify / finish
   );
 }
 
+
 async function analyzeImage(request, env) {
   if (request.method === "OPTIONS") {
     const headers = new Headers({
@@ -1285,9 +1346,9 @@ async function analyzeImage(request, env) {
     return jsonResponse({ error: "只支持 POST 请求。" }, 405, request);
   }
 
-  if (!env.OPENROUTER_API_KEY) {
+  if (!env.GROQ_API_KEY && !env.OPENROUTER_API_KEY) {
     return jsonResponse(
-      { error: "服务器尚未配置 OPENROUTER_API_KEY。" },
+      { error: "服务器尚未配置 GROQ_API_KEY 或 OPENROUTER_API_KEY。" },
       500,
       request,
     );
@@ -1305,8 +1366,6 @@ async function analyzeImage(request, env) {
     return jsonResponse({ error: "没有收到有效的错题图片。" }, 400, request);
   }
 
-  // Keep the V0.1 request small and predictable. The browser also compresses images
-  // before sending them.
   if (image.length > 8 * 1024 * 1024) {
     return jsonResponse(
       { error: "图片太大，请选择较小的图片再试。" },
@@ -1368,190 +1427,144 @@ async function analyzeImage(request, env) {
 }
 confidence 为 0 到 1 之间的小数，表示你对整道题识别与分析的把握程度。`;
 
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 30000);
+  const providers = getAIProviders(env);
+  const failures = [];
 
-  let upstreamResponse;
-  try {
-    upstreamResponse = await fetch(
-      "https://openrouter.ai/api/v1/chat/completions",
+  const baseBody = {
+    temperature: 0.2,
+    max_tokens: 1800,
+    reasoning: { enabled: false },
+    tools: [
       {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${env.OPENROUTER_API_KEY}`,
-          "Content-Type": "application/json",
-          "HTTP-Referer": "https://math-ai.zxiang88688.workers.dev",
-          "X-Title": "小学数学 AI",
-        },
-        body: JSON.stringify({
-          models: [
-            "qwen/qwen3.8-27b:free",
-            "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
-            "openrouter/free",
-          ],
-          temperature: 0.2,
-          max_tokens: 1800,
-          reasoning: { enabled: false },
-          tools: [
-            {
-              type: "function",
-              function: {
-                name: "analyze_math_problem",
-                description: "Return the structured analysis of the uploaded primary-school math problem.",
-                parameters: {
-                  type: "object",
-                  properties: {
-                    question: { type: "string", description: "题目原文或尽可能准确的识别结果" },
-                    student_answer: { type: "string", description: "孩子写出的答案；无法确认时写无法确认" },
-                    correct_answer: { type: "string", description: "正确答案；无法可靠计算或确认时写无法确认" },
-                    knowledge_points: {
-                      type: "array",
-                      items: { type: "string" },
-                      description: "主要小学数学知识点"
-                    },
-                    error_type: { type: "string", description: "错误类型，只能从指定类型中选一个" },
-                    error_nature: { type: "string", description: "错误性质，只能是偶然失误、知识理解不足或无法判断" },
-                    analysis: { type: "string", description: "简明说明错误原因、应检查什么以及判断错误性质的依据" },
-                    confidence: { type: "number", description: "0到1之间的识别与分析把握度" },
-                    unclear: { type: "boolean", description: "图片是否存在影响可靠分析的模糊内容" }
-                  },
-                  required: [
-                    "question",
-                    "student_answer",
-                    "correct_answer",
-                    "knowledge_points",
-                    "error_type",
-                    "error_nature",
-                    "analysis",
-                    "confidence",
-                    "unclear"
-                  ]
-                }
-              }
-            }
-          ],
-          tool_choice: {
-            type: "function",
-            function: { name: "analyze_math_problem" }
-          },
-          messages: [
-          {
-            role: "user",
-            content: [
-              { type: "text", text: prompt },
-              {
-                type: "image_url",
-                image_url: { url: image },
+        type: "function",
+        function: {
+          name: "analyze_math_problem",
+          description: "Return the structured analysis of the uploaded primary-school math problem.",
+          parameters: {
+            type: "object",
+            properties: {
+              question: { type: "string", description: "题目原文或尽可能准确的识别结果" },
+              student_answer: { type: "string", description: "孩子写出的答案；无法确认时写无法确认" },
+              correct_answer: { type: "string", description: "正确答案；无法可靠计算或确认时写无法确认" },
+              knowledge_points: {
+                type: "array",
+                items: { type: "string" },
+                description: "主要小学数学知识点"
               },
-            ],
+              error_type: { type: "string", description: "错误类型，只能从指定类型中选一个" },
+              error_nature: { type: "string", description: "错误性质，只能是偶然失误、知识理解不足或无法判断" },
+              analysis: { type: "string", description: "简明说明错误原因、应检查什么以及判断错误性质的依据" },
+              confidence: { type: "number", description: "0到1之间的识别与分析把握度" },
+              unclear: { type: "boolean", description: "图片是否存在影响可靠分析的模糊内容" }
+            },
+            required: [
+              "question",
+              "student_answer",
+              "correct_answer",
+              "knowledge_points",
+              "error_type",
+              "error_nature",
+              "analysis",
+              "confidence",
+              "unclear"
+            ]
+          }
+        }
+      }
+    ],
+    tool_choice: {
+      type: "function",
+      function: { name: "analyze_math_problem" }
+    },
+    messages: [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: prompt },
+          {
+            type: "image_url",
+            image_url: { url: image },
           },
-          ],
-        }),
-        signal: controller.signal,
+        ],
       },
+    ],
+  };
+
+  for (const provider of providers) {
+    const result = await fetchAIProvider(
+      provider,
+      baseBody,
+      30000,
     );
-  } catch (error) {
-    if (error && error.name === "AbortError") {
-      return jsonResponse(
-        {
-          error: "AI 服务响应超时（30 秒）。免费模型当前可能繁忙，请稍后再试。",
-          code: "OPENROUTER_TIMEOUT",
-        },
-        504,
-        request,
-      );
+
+    if (!result.ok) {
+      failures.push({
+        provider: provider.name,
+        status: result.status,
+        reason: result.reason,
+      });
+      continue;
     }
 
-    return jsonResponse(
-      {
-        error: "连接 OpenRouter 失败：" + (error?.message || "未知网络错误"),
-        code: "OPENROUTER_NETWORK_ERROR",
-      },
-      502,
-      request,
-    );
-  } finally {
-    clearTimeout(timeoutId);
-  }
+    const message = result.body?.choices?.[0]?.message;
 
-  let upstreamBody;
-  try {
-    upstreamBody = await upstreamResponse.json();
-  } catch (_) {
-    return jsonResponse(
-      { error: `OpenRouter 返回了无法解析的响应（HTTP ${upstreamResponse.status}）。` },
-      502,
-      request,
-    );
-  }
+    const toolCall = Array.isArray(message?.tool_calls)
+      ? message.tool_calls.find(
+          (call) =>
+            call?.type === "function" &&
+            call?.function?.name === "analyze_math_problem",
+        )
+      : null;
 
-  if (!upstreamResponse.ok) {
-    const errorObject = upstreamBody?.error || {};
-    const message =
-      errorObject?.message ||
-      upstreamBody?.message ||
-      "OpenRouter 请求失败。";
+    if (toolCall?.function?.arguments) {
+      try {
+        const parsedArgs = JSON.parse(toolCall.function.arguments);
+        const normalized = normalizeResult(parsedArgs);
+        normalized.model =
+          result.body?.model ||
+          provider.model ||
+          provider.name;
+        normalized.ai_provider = provider.name;
+        return jsonResponse(normalized, 200, request);
+      } catch (_) {
+        failures.push({
+          provider: provider.name,
+          status: 502,
+          reason: "AI 工具调用返回的数据不是有效 JSON。",
+        });
+        continue;
+      }
+    }
 
-    return jsonResponse(
-      {
-        error: message,
-        upstream_status: upstreamResponse.status,
-        upstream_code: errorObject?.code ?? null,
-        upstream_metadata:
-          errorObject?.metadata ?? upstreamBody?.metadata ?? null,
-      },
-      502,
-      request,
-    );
-  }
+    const content = message?.content;
+    const parsed = extractJson(content);
 
-  const message = upstreamBody?.choices?.[0]?.message;
-
-  const toolCall = Array.isArray(message?.tool_calls)
-    ? message.tool_calls.find(
-        (call) =>
-          call?.type === "function" &&
-          call?.function?.name === "analyze_math_problem",
-      )
-    : null;
-
-  if (toolCall?.function?.arguments) {
-    try {
-      const parsedArgs = JSON.parse(toolCall.function.arguments);
-      const normalized = normalizeResult(parsedArgs);
-      normalized.model = upstreamBody?.model ?? null;
+    if (parsed) {
+      const normalized = normalizeResult(parsed);
+      normalized.model =
+        result.body?.model ||
+        provider.model ||
+        provider.name;
+      normalized.ai_provider = provider.name;
       return jsonResponse(normalized, 200, request);
-    } catch (_) {
-      return jsonResponse(
-        {
-          error: "AI 工具调用返回的数据不是有效 JSON。",
-          raw_preview: String(toolCall.function.arguments).slice(0, 800),
-        },
-        502,
-        request,
-      );
     }
+
+    failures.push({
+      provider: provider.name,
+      status: 502,
+      reason: "AI 没有返回可用的结构化分析结果。",
+    });
   }
 
-  const content = message?.content;
-  const parsed = extractJson(content);
-
-  if (!parsed) {
-    const raw = contentToText(content);
-
-    return jsonResponse(
-      {
-        error: "AI 没有返回可用的结构化分析结果。",
-        finish_reason: upstreamBody?.choices?.[0]?.finish_reason ?? null,
-        raw_length: raw.length,
-        raw_preview: raw.slice(0, 1200),
-      },
-      502,
-      request,
-    );
-  }
-
-  return jsonResponse(normalizeResult(parsed), 200, request);
+  return jsonResponse(
+    {
+      error: "所有已配置的 AI 服务都没有返回可用的分析结果。",
+      code: "ANALYZE_ALL_PROVIDERS_FAILED",
+      failures: failures,
+    },
+    failures.some((item) => item.status === 429) ? 429 : 502,
+    request,
+  );
 }
 
 export default {
