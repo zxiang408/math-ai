@@ -672,7 +672,7 @@
 
     <div class="notice" id="mockModePanel">
       <strong>🧪 开发测试模式</strong><br>
-      当前默认不调用 Groq / OpenRouter，使用本地 Mock AI 数据继续验证完整学习闭环。
+      当前默认不调用 Groq / OpenRouter，页面中的错题、答案和训练作答均为测试数据，不代表真实孩子的学习记录。
       <div class="button-row" style="margin-top:10px;">
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
           <input type="checkbox" id="mockAiToggle" checked>
@@ -719,7 +719,7 @@
 
     <div class="result-item">
 
-      <div class="result-title">
+      <div class="result-title" id="studentAnswerTitle">
         孩子的答案
       </div>
 
@@ -2133,6 +2133,9 @@ window.MathAILearningModel = {
 
   const mockCaseSelect =
     document.getElementById("mockCaseSelect");
+
+  const studentAnswerTitle =
+    document.getElementById("studentAnswerTitle");
 
   const status =
     document.getElementById("status");
@@ -4682,7 +4685,9 @@ window.MathAILearningModel = {
       " ｜ " + focus.reason +
       " ｜ 第" + activeTraining.sessionIndex + "道";
     trainingStatus.textContent =
-      "题目已生成，请让孩子独立完成。";
+      useMockAI
+        ? "测试题已生成，请输入一组测试作答。"
+        : "题目已生成，请让孩子独立完成。";
     trainingQuestion.textContent =
       training.question;
     trainingAnswer.value = "";
@@ -5175,7 +5180,9 @@ window.MathAILearningModel = {
           : "");
 
       trainingStatus.textContent =
-        "本次训练已完成；训练结果不会直接改变知识层面的能力状态。";
+        useMockAI
+        ? "本次测试训练已完成；测试结果会记录为开发测试证据，不代表真实孩子的能力变化。"
+        : "本次训练已完成；训练结果不会直接改变知识层面的能力状态。";
 
       trainingHint.style.display = "none";
       trainingStepResult.style.display = "none";
@@ -5187,10 +5194,14 @@ window.MathAILearningModel = {
     }
 
     trainingResult.textContent =
-      "❌ 这次还没有做对。我们不直接公布答案，从第1步开始一步一步解决。";
+      useMockAI
+        ? "❌ 这次测试作答还没有做对。我们不直接公布答案，从第1步开始一步一步解决。"
+        : "❌ 这次还没有做对。我们不直接公布答案，从第1步开始一步一步解决。";
 
     trainingStatus.textContent =
-      "请完成第1步，答对后才会进入下一步。";
+      useMockAI
+        ? "请输入第1步的测试作答，答对后才会进入下一步。"
+        : "请完成第1步，答对后才会进入下一步。";
 
     trainingAnswer.disabled = true;
     submitTrainingButton.disabled = true;
@@ -5479,8 +5490,9 @@ window.MathAILearningModel = {
     retryTrainingButton.style.display = "none";
 
     trainingStatus.textContent =
-      "第" + (index + 1) + "步：" +
-      "先独立填写，答对后才能继续。";
+      useMockAI
+        ? "第" + (index + 1) + "步：请输入测试作答，答对后才能继续。"
+        : "第" + (index + 1) + "步：先独立填写，答对后才能继续。";
 
     trainingStepAnswer.focus();
   }
@@ -5494,7 +5506,7 @@ window.MathAILearningModel = {
 
     trainingResult.style.display = "block";
     trainingResult.textContent =
-      "✅ 太好了！你已经一步一步把这道题解决了。" +
+      "✅ 测试作答已一步一步完成。" +
       (activeTraining.explanation
         ? " 完整思路：" + activeTraining.explanation
         : "");
@@ -7831,6 +7843,11 @@ window.MathAILearningModel = {
   function updateMockModeUI() {
     useMockAI = Boolean(mockAiToggle?.checked);
     selectedMockCase = mockCaseSelect?.value || "multiples";
+
+    if (studentAnswerTitle) {
+      studentAnswerTitle.textContent =
+        useMockAI ? "测试作答" : "孩子的答案";
+    }
 
     if (useMockAI) {
       analyzeButton.textContent = "开始测试分析（Mock AI）";
