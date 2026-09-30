@@ -78,7 +78,15 @@
     }
 
     #fileInput {
-      display: none;
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
     }
 
     #preview {
@@ -605,9 +613,10 @@
 
     <h2>📷 上传错题</h2>
 
-    <div
+    <label
       class="upload-area"
       id="uploadArea"
+      for="fileInput"
     >
 
       <div class="upload-icon">
@@ -633,7 +642,7 @@
         alt="错题照片预览"
       >
 
-    </div>
+    </label>
 
 
     <div class="button-row">
@@ -7460,17 +7469,6 @@ window.MathAILearningModel = {
   );
 
   renderHistory();
-
-
-  // 点击上传区域
-  uploadArea.addEventListener(
-    "click",
-    function () {
-
-      fileInput.click();
-
-    }
-  );
 
 
   // 选择图片
