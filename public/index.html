@@ -791,7 +791,7 @@
 
     <div class="notice">
 
-      当前是 V0.20.0。
+      当前是 V0.21.0。
       <br>
       已加入可开关的 Mock AI 开发测试模式；默认不调用外部 AI，可继续验证错题库、能力档案、针对性训练、分步骤辅导与复测闭环。
       <br>
@@ -953,9 +953,9 @@
   </div>
 
   <div class="footer">
-    小学数学 AI · V0.20.0
+    小学数学 AI · V0.21.0
     <br>
-    <span id="appVersion">程序版本：V0.20.0 · Mock AI 可切换 · 微技能自适应</span>
+    <span id="appVersion">程序版本：V0.21.0 · Mock AI 可切换 · 微技能依赖调度</span>
   </div>
 
 </div>
@@ -3303,41 +3303,246 @@ window.MathAILearningModel = {
    * 这些定义只描述“一个知识点要观察哪些具体环节”。
    * 真实状态仍由训练过程中的作答证据计算，不在这里直接判断掌握。
    */
+  /*
+   * V0.21 微技能依赖定义
+   *
+   * prerequisites 表示“这个微技能要先具备哪些微技能证据”。
+   * 依赖只决定训练顺序，不直接改变能力状态。
+   * 某个微技能只有在全部前置微技能达到 mastered 后，
+   * 才允许进入正常训练；否则自动回到最需要补的前置微技能。
+   */
   function getTrainingAbilityDefinitions(point) {
     const definitions = {
       "数与代数 / 倍数关系": [
-        { key: "large_number_parts", label: "倍数 → 份数" },
-        { key: "total_parts", label: "总份数" },
-        { key: "unit_value", label: "总和 ÷ 总份数" }
+        {
+          key: "large_number_parts",
+          label: "倍数 → 份数",
+          prerequisites: []
+        },
+        {
+          key: "total_parts",
+          label: "总份数",
+          prerequisites: ["large_number_parts"]
+        },
+        {
+          key: "unit_value",
+          label: "总和 ÷ 总份数",
+          prerequisites: ["total_parts"]
+        }
       ],
       "图形与几何 / 正方形面积": [
-        { key: "side_scale", label: "边长变化倍数" },
-        { key: "area_scale_or_calculation", label: "面积变化 / 计算" }
+        {
+          key: "side_scale",
+          label: "边长变化倍数",
+          prerequisites: []
+        },
+        {
+          key: "area_scale_or_calculation",
+          label: "面积变化 / 计算",
+          prerequisites: ["side_scale"]
+        }
       ],
       "数与代数 / 积的变化规律": [
-        { key: "unchanged_factor", label: "识别不变因数" },
-        { key: "combined_factor_change", label: "合并两个因数的变化" }
+        {
+          key: "unchanged_factor",
+          label: "识别不变因数",
+          prerequisites: []
+        },
+        {
+          key: "combined_factor_change",
+          label: "合并两个因数的变化",
+          prerequisites: ["unchanged_factor"]
+        }
       ],
       "数与代数 / 四则运算": [
-        { key: "multiplication_first", label: "先算乘法" },
-        { key: "subtraction_after_multiplication", label: "再算减法" }
+        {
+          key: "multiplication_first",
+          label: "先算乘法",
+          prerequisites: []
+        },
+        {
+          key: "subtraction_after_multiplication",
+          label: "再算减法",
+          prerequisites: ["multiplication_first"]
+        }
       ],
       "数与代数 / 小数": [
-        { key: "decimal_alignment", label: "小数点对齐" },
-        { key: "decimal_calculation", label: "小数计算" }
+        {
+          key: "decimal_alignment",
+          label: "小数点对齐",
+          prerequisites: []
+        },
+        {
+          key: "decimal_calculation",
+          label: "小数计算",
+          prerequisites: ["decimal_alignment"]
+        }
       ]
     };
 
     const rows = definitions[String(point || "").trim()];
+
     return Array.isArray(rows)
       ? rows.map(function (item) {
           return {
             key: item.key,
-            label: item.label
+            label: item.label,
+            prerequisites: Array.isArray(item.prerequisites)
+              ? item.prerequisites.slice()
+              : []
           };
         })
       : [];
   }
+
+  /*
+   * V0.21 微技能训练顺序解析器
+   *
+   * 规则：
+   * 1. 无前置依赖的微技能可以直接开始。
+   * 2. 有前置依赖的微技能，只有全部前置达到 mastered 才能训练。
+   * 3. 如果目标微技能尚未满足依赖，自动回退到最先未稳定的前置微技能。
+   * 4. mastered 仍沿用现有真实作答证据状态，不由本函数修改。
+   */
+  function resolveMicroSkillTrainingOrder(
+    point,
+    requestedKey,
+    trainingHistory
+  ) {
+    const definitions =
+      getTrainingAbilityDefinitions(point);
+
+    if (!definitions.length) {
+      return {
+        key: null,
+        label: "",
+        requestedKey: requestedKey || null,
+        redirected: false,
+        prerequisiteKey: null,
+        prerequisiteLabel: "",
+        reason: ""
+      };
+    }
+
+    const history =
+      Array.isArray(trainingHistory)
+        ? trainingHistory
+        : [];
+
+    const stateMap = {};
+
+    definitions.forEach(function (definition) {
+      stateMap[definition.key] =
+        getTrainingEvidenceAbilityState(
+          point,
+          definition.key,
+          history
+        );
+    });
+
+    function findDefinition(key) {
+      return definitions.find(function (definition) {
+        return definition.key === key;
+      }) || null;
+    }
+
+    function findFirstUnmastered() {
+      return definitions.find(function (definition) {
+        return (
+          stateMap[definition.key]?.state !== "mastered"
+        );
+      }) || definitions[0];
+    }
+
+    function prerequisitesReady(definition) {
+      return (definition.prerequisites || []).every(function (key) {
+        return stateMap[key]?.state === "mastered";
+      });
+    }
+
+    const requested =
+      findDefinition(requestedKey) ||
+      findFirstUnmastered();
+
+    let selected = requested;
+
+    if (!prerequisitesReady(selected)) {
+      selected =
+        (selected.prerequisites || [])
+          .map(function (key) {
+            return findDefinition(key);
+          })
+          .filter(Boolean)
+          .find(function (definition) {
+            return !prerequisitesReady(definition) ||
+              stateMap[definition.key]?.state !== "mastered";
+          }) ||
+        findFirstUnmastered();
+    }
+
+    /*
+     * 如果选中的前置本身还有更深一层依赖，沿依赖链继续向前追。
+     * 当前知识点依赖链很短，但这里一次性支持多层。
+     */
+    let guard = 0;
+    while (
+      selected &&
+      !prerequisitesReady(selected) &&
+      guard < definitions.length + 2
+    ) {
+      const next =
+        (selected.prerequisites || [])
+          .map(function (key) {
+            return findDefinition(key);
+          })
+          .filter(Boolean)
+          .find(function (definition) {
+            return stateMap[definition.key]?.state !== "mastered";
+          });
+
+      if (!next || next.key === selected.key) {
+        break;
+      }
+
+      selected = next;
+      guard += 1;
+    }
+
+    const redirected =
+      Boolean(
+        requestedKey &&
+        selected &&
+        selected.key !== requestedKey
+      );
+
+    const requestedDefinition =
+      findDefinition(requestedKey);
+
+    return {
+      key: selected ? selected.key : null,
+      label: selected ? selected.label : "",
+      requestedKey: requestedKey || null,
+      requestedLabel: requestedDefinition
+        ? requestedDefinition.label
+        : "",
+      redirected: redirected,
+      prerequisiteKey:
+        redirected ? selected.key : null,
+      prerequisiteLabel:
+        redirected ? selected.label : "",
+      reason:
+        redirected
+          ? "当前目标微技能的前置环节尚未稳定掌握，先完成“" +
+            selected.label +
+            "”，再返回“" +
+            (requestedDefinition
+              ? requestedDefinition.label
+              : String(requestedKey || "")) +
+            "”。"
+          : ""
+    };
+  }
+
 
   function getTrainingEvidenceFocus(point) {
     const records = loadTrainingHistory()
@@ -3518,17 +3723,34 @@ window.MathAILearningModel = {
         label: "",
         difficulty: 1,
         difficultyLabel: "基础",
+        sessions: 0,
+        redirected: false,
+        requestedKey: null,
         reason: "当前知识点尚未配置微技能训练定义。"
       };
     }
 
-    const selectedKey =
+    const requestedKey =
       focus?.evidenceKey &&
       definitions.some(function (item) {
         return item.key === focus.evidenceKey;
       })
         ? focus.evidenceKey
         : definitions[0].key;
+
+    /*
+     * V0.21：先解决微技能依赖，再计算该微技能自己的难度。
+     * 因此 V0.20 的动态难度逻辑仍然完整保留，只是目标先经过依赖调度。
+     */
+    const orderPlan =
+      resolveMicroSkillTrainingOrder(
+        point,
+        requestedKey,
+        trainingHistory
+      );
+
+    const selectedKey =
+      orderPlan.key || definitions[0].key;
 
     const selected =
       definitions.find(function (item) {
@@ -3646,6 +3868,13 @@ window.MathAILearningModel = {
           };
         });
 
+    function difficultyLabel(value) {
+      return value === 1 ? "基础" :
+        value === 2 ? "巩固" :
+        value === 3 ? "进阶" :
+        value === 4 ? "变式" : "迁移";
+    }
+
     if (sessions.length === 0) {
       return {
         key: selected.key,
@@ -3653,7 +3882,11 @@ window.MathAILearningModel = {
         difficulty: 1,
         difficultyLabel: "基础",
         sessions: 0,
+        redirected: orderPlan.redirected,
+        requestedKey: orderPlan.requestedKey,
+        requestedLabel: orderPlan.requestedLabel,
         reason:
+          orderPlan.reason ||
           "这个微技能还没有训练证据，从难度1的基础题开始。"
       };
     }
@@ -3672,13 +3905,13 @@ window.MathAILearningModel = {
         key: selected.key,
         label: selected.label,
         difficulty: difficulty,
-        difficultyLabel:
-          difficulty === 1 ? "基础" :
-          difficulty === 2 ? "巩固" :
-          difficulty === 3 ? "进阶" :
-          difficulty === 4 ? "变式" : "迁移",
+        difficultyLabel: difficultyLabel(difficulty),
         sessions: sessions.length,
+        redirected: orderPlan.redirected,
+        requestedKey: orderPlan.requestedKey,
+        requestedLabel: orderPlan.requestedLabel,
         reason:
+          orderPlan.reason ||
           "这个微技能最近出现错误或需要提示，下一轮降低1级。"
       };
     }
@@ -3702,13 +3935,13 @@ window.MathAILearningModel = {
         key: selected.key,
         label: selected.label,
         difficulty: difficulty,
-        difficultyLabel:
-          difficulty === 1 ? "基础" :
-          difficulty === 2 ? "巩固" :
-          difficulty === 3 ? "进阶" :
-          difficulty === 4 ? "变式" : "迁移",
+        difficultyLabel: difficultyLabel(difficulty),
         sessions: sessions.length,
+        redirected: orderPlan.redirected,
+        requestedKey: orderPlan.requestedKey,
+        requestedLabel: orderPlan.requestedLabel,
         reason:
+          orderPlan.reason ||
           "这个微技能最近连续两轮形成独立正确证据，下一轮提高1级。"
       };
     }
@@ -3717,13 +3950,13 @@ window.MathAILearningModel = {
       key: selected.key,
       label: selected.label,
       difficulty: difficulty,
-      difficultyLabel:
-        difficulty === 1 ? "基础" :
-        difficulty === 2 ? "巩固" :
-        difficulty === 3 ? "进阶" :
-        difficulty === 4 ? "变式" : "迁移",
+      difficultyLabel: difficultyLabel(difficulty),
       sessions: sessions.length,
+      redirected: orderPlan.redirected,
+      requestedKey: orderPlan.requestedKey,
+      requestedLabel: orderPlan.requestedLabel,
       reason:
+        orderPlan.reason ||
         "这个微技能的证据还不足以升降难度，本轮保持当前难度。"
     };
   }
@@ -5097,6 +5330,35 @@ window.MathAILearningModel = {
         trainingHistory
       );
 
+    /*
+     * V0.21 调度后，实际出题焦点必须跟着“最终被选中的微技能”走，
+     * 防止界面显示在练 A，题目却仍按 B 生成。
+     */
+    const scheduledFocus =
+      microSkillPlan.key &&
+      (
+        !effectiveFocus ||
+        effectiveFocus.evidenceKey !== microSkillPlan.key
+      )
+        ? {
+            ...effectiveFocus,
+            evidenceKey: microSkillPlan.key,
+            evidenceLabel: microSkillPlan.label,
+            abilityState:
+              getTrainingEvidenceAbilityState(
+                trainingPoint,
+                microSkillPlan.key,
+                trainingHistory
+              ).state,
+            abilityStateText:
+              getTrainingEvidenceAbilityState(
+                trainingPoint,
+                microSkillPlan.key,
+                trainingHistory
+              ).stateText
+          }
+        : effectiveFocus;
+
     const training = generateNonRepeatedTargetedTraining(
       trainingPoint,
       effectiveFocus,
@@ -5119,7 +5381,7 @@ window.MathAILearningModel = {
         plan.redirected,
       prerequisite_point:
         plan.prerequisitePoint || null,
-      focus: effectiveFocus,
+      focus: scheduledFocus,
       micro_skill_key:
         microSkillPlan.key,
       micro_skill_label:
