@@ -406,7 +406,7 @@
     <div class="result-item">
 
       <div class="result-title">
-        错误类型
+        错误类型 / 错误性质
       </div>
 
       <div id="errorType">
@@ -512,6 +512,69 @@
   const HISTORY_KEY =
     "math-ai-v0.2-mistake-history";
 
+  function standardizeErrorType(value) {
+    const text = String(value || "").trim();
+
+    if (!text) return "无法判断";
+
+    const types = [
+      "计算错误",
+      "概念理解错误",
+      "审题错误",
+      "方法/步骤错误",
+      "抄写/书写错误",
+      "单位错误",
+      "粗心/注意力错误"
+    ];
+
+    for (const type of types) {
+      if (text === type || text.includes(type)) {
+        return type;
+      }
+    }
+
+    if (text.includes("抄") || text.includes("书写")) return "抄写/书写错误";
+    if (text.includes("计算")) return "计算错误";
+    if (text.includes("概念")) return "概念理解错误";
+    if (text.includes("审题")) return "审题错误";
+    if (text.includes("步骤") || text.includes("方法")) return "方法/步骤错误";
+    if (text.includes("单位")) return "单位错误";
+    if (text.includes("粗心") || text.includes("注意")) return "粗心/注意力错误";
+
+    return "无法判断";
+  }
+
+  function standardizeErrorNature(value) {
+    const text = String(value || "").trim();
+
+    if (
+      text === "偶然失误" ||
+      text === "知识理解不足" ||
+      text === "无法判断"
+    ) {
+      return text;
+    }
+
+    if (
+      text.includes("偶然") ||
+      text.includes("失误") ||
+      text.includes("粗心")
+    ) {
+      return "偶然失误";
+    }
+
+    if (
+      text.includes("知识") ||
+      text.includes("概念") ||
+      text.includes("没掌握") ||
+      text.includes("未掌握")
+    ) {
+      return "知识理解不足";
+    }
+
+    return "无法判断";
+  }
+
   function standardizeKnowledgePoint(point) {
     const text = String(point || "")
       .trim()
@@ -597,13 +660,47 @@
           changed = true;
         }
 
+        let errorType =
+          item.error_type || "无法判断";
+        let errorNature =
+          item.error_nature || "无法判断";
+
+        const analysisText =
+          String(item.analysis || "");
+
+        if (
+          errorType === "审题错误" &&
+          /最终结果.*对|结果.*正确|误写|抄写|写成/.test(analysisText)
+        ) {
+          errorType = "抄写/书写错误";
+          errorNature = "偶然失误";
+          changed = true;
+        } else {
+          const normalizedType =
+            standardizeErrorType(errorType);
+          const normalizedNature =
+            standardizeErrorNature(errorNature);
+
+          if (normalizedType !== errorType) {
+            errorType = normalizedType;
+            changed = true;
+          }
+
+          if (normalizedNature !== errorNature) {
+            errorNature = normalizedNature;
+            changed = true;
+          }
+        }
+
         return {
           ...item,
           knowledge_points_raw:
             Array.isArray(originalPoints)
               ? originalPoints
               : [],
-          knowledge_points: standardized
+          knowledge_points: standardized,
+          error_type: errorType,
+          error_nature: errorNature
         };
       });
 
@@ -758,7 +855,9 @@
         " ｜ 正确答案：" +
         (item.correct_answer || "无法确认") +
         " ｜ 错误类型：" +
-        (item.error_type || "无法判断");
+        (item.error_type || "无法判断") +
+        " ｜ 错误性质：" +
+        (item.error_nature || "无法判断");
 
       const tags = document.createElement("div");
       tags.className = "history-tags";
@@ -845,7 +944,12 @@
       knowledge_points: standardizeKnowledgePoints(
         data.knowledge_points
       ),
-      error_type: data.error_type || "",
+      error_type: standardizeErrorType(
+        data.error_type
+      ),
+      error_nature: standardizeErrorNature(
+        data.error_nature
+      ),
       analysis: data.analysis || "",
       confidence:
         typeof data.confidence === "number"
@@ -1070,7 +1174,9 @@
     renderKnowledgePoints(data.knowledge_points);
 
     document.getElementById("errorType").textContent =
-      data.error_type || "无法判断";
+      (data.error_type || "无法判断") +
+      " ｜ " +
+      (data.error_nature || "错误性质无法判断");
 
     document.getElementById("analysis").textContent =
       data.analysis || "暂无分析结果";
