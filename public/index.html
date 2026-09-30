@@ -753,11 +753,11 @@
 
     <div class="notice">
 
-      当前是 V0.11。
+      当前是 V0.12。
       <br>
       已接入 OpenRouter 免费模型路由，用于错题照片识别与 AI 分析。
       <br>
-      当前已支持基础错题库、知识点标准化统计、能力档案、复测、针对性训练、分步骤互动辅导，以及长期保持模型；V0.11 新增长期知识结构图：把知识点、子能力与前后依赖统一组织起来。
+      当前已支持基础错题库、知识点标准化统计、能力档案、复测、针对性训练、分步骤互动辅导，以及长期保持模型；V0.11 已建立知识结构图；V0.12 开始让前置知识证据参与训练路径决策。
 
     </div>
 
@@ -899,9 +899,9 @@
   </div>
 
   <div class="footer">
-    小学数学 AI · V0.11
+    小学数学 AI · V0.12
     <br>
-    <span id="appVersion">程序版本：V0.11</span>
+    <span id="appVersion">程序版本：V0.12</span>
   </div>
 
 </div>
@@ -2551,6 +2551,224 @@
       : null;
   }
 
+  /*
+   * V0.12 知识结构驱动的训练路径
+   *
+   * 原则：
+   * 1. 前置知识关系只用于“寻找真正需要先补的知识”，不会凭空把
+   *    “尚未评估”判成薄弱。
+   * 2. 只有当前置知识已有真实错题/复测证据、状态尚未稳定掌握，
+   *    且该知识点当前已有本地训练题生成器时，才允许训练路径向前置知识转移。
+   * 3. 如果目标知识点已经有明确的子能力训练证据，则优先继续解决
+   *    当前这个具体子能力，不被前置知识路径覆盖。
+   * 4. “再练一道”会重新计算路径，因此前置知识恢复后会自动返回原目标。
+   */
+  function getSupportedTrainingPoints() {
+    return new Set([
+      "图形与几何 / 正方形面积",
+      "数与代数 / 倍数关系",
+      "数与代数 / 积的变化规律",
+      "数与代数 / 四则运算",
+      "数与代数 / 小数"
+    ]);
+  }
+
+  function resolveTrainingTarget(point, history) {
+    const trainingHistory = loadTrainingHistory();
+    const supported = getSupportedTrainingPoints();
+
+    const currentAbilityFocus =
+      getTrainingAbilityFocus(
+        point,
+        trainingHistory
+      );
+
+    // 当前目标已经有明确的子能力证据，继续解决当前环节。
+    if (currentAbilityFocus) {
+      return {
+        targetPoint: point,
+        requestedPoint: point,
+        redirected: false,
+        prerequisitePoint: null,
+        reason: ""
+      };
+    }
+
+    const node = getKnowledgeGraphNode(point);
+
+    if (
+      !node ||
+      !Array.isArray(node.prerequisites) ||
+      node.prerequisites.length === 0
+    ) {
+      return {
+        targetPoint: point,
+        requestedPoint: point,
+        redirected: false,
+        prerequisitePoint: null,
+        reason: ""
+      };
+    }
+
+    const retestHistory = loadRetestHistory();
+    const currentState =
+      getKnowledgeState(
+        point,
+        history,
+        retestHistory
+      );
+
+    const latestTargetMistake =
+      history
+        .filter(function (item) {
+          return standardizeKnowledgePoints(
+            item.knowledge_points
+          ).includes(point);
+        })
+        .slice()
+        .sort(function (a, b) {
+          return new Date(b.created_at || 0) -
+            new Date(a.created_at || 0);
+        })[0] || null;
+
+    const latestErrorType = latestTargetMistake
+      ? standardizeErrorType(
+          latestTargetMistake.error_type
+        )
+      : "无法判断";
+
+    const candidates =
+      node.prerequisites
+        .map(function (prerequisiteId, index) {
+          if (!supported.has(prerequisiteId)) {
+            return null;
+          }
+
+          const prerequisiteNode =
+            getKnowledgeGraphNode(prerequisiteId);
+
+          if (!prerequisiteNode) {
+            return null;
+          }
+
+          const hasEvidence =
+            history.some(function (item) {
+              return standardizeKnowledgePoints(
+                item.knowledge_points
+              ).includes(prerequisiteId);
+            });
+
+          if (!hasEvidence) {
+            return null;
+          }
+
+          const state =
+            getKnowledgeState(
+              prerequisiteId,
+              history,
+              retestHistory
+            );
+
+          if (
+            state.state === "observed" ||
+            state.state === "mastered"
+          ) {
+            return null;
+          }
+
+          const abilityFocus =
+            getTrainingAbilityFocus(
+              prerequisiteId,
+              trainingHistory
+            );
+
+          let score = 0;
+
+          const stateScore = {
+            not_mastered: 100,
+            unstable: 95,
+            learning: 90,
+            recovering: 80,
+            initial_mastery: 35,
+            observed: 0,
+            mastered: 0
+          };
+
+          score +=
+            stateScore[state.state] || 0;
+
+          if (abilityFocus) {
+            if (abilityFocus.state === "prompted") {
+              score += 45;
+            } else if (abilityFocus.state === "forming") {
+              score += 25;
+            }
+          }
+
+          if (
+            latestErrorType === "概念理解错误" ||
+            latestErrorType === "方法/步骤错误"
+          ) {
+            score += 20;
+          }
+
+          // 知识结构中排在前面的前置节点优先，
+          // 但只作为极小的平手修正，不能压过真实证据。
+          score -= index * 2;
+
+          return {
+            point: prerequisiteId,
+            label: prerequisiteNode.label,
+            stateText: state.stateText,
+            abilityFocus: abilityFocus,
+            score: score
+          };
+        })
+        .filter(Boolean)
+        .sort(function (a, b) {
+          return b.score - a.score;
+        });
+
+    if (candidates.length === 0) {
+      return {
+        targetPoint: point,
+        requestedPoint: point,
+        redirected: false,
+        prerequisitePoint: null,
+        reason: ""
+      };
+    }
+
+    // 只有当前目标本身已经进入较稳定阶段时，才不轻易向前置知识转移。
+    // “未掌握/学习中”仍允许检查前置依赖，因为这正是需要排查根因的阶段。
+    if (
+      currentState.state === "mastered" ||
+      currentState.state === "recovering"
+    ) {
+      return {
+        targetPoint: point,
+        requestedPoint: point,
+        redirected: false,
+        prerequisitePoint: null,
+        reason: ""
+      };
+    }
+
+    const selected = candidates[0];
+
+    return {
+      targetPoint: selected.point,
+      requestedPoint: point,
+      redirected: true,
+      prerequisitePoint: selected.point,
+      prerequisiteLabel: selected.label,
+      prerequisiteStateText:
+        selected.stateText,
+      reason:
+        "目标知识点存在未稳定掌握的前置知识证据，先补这个前置环节，再回到原目标。"
+    };
+  }
+
   function getTrainingFocus(point, history, state) {
     const matching = history
       .filter(function (item) {
@@ -3189,13 +3407,30 @@
   }
 
   function showTrainingPanel(point, history, stats, sessionIndex) {
+    const plan =
+      resolveTrainingTarget(
+        point,
+        history
+      );
+
+    const trainingPoint =
+      plan.targetPoint;
+
+    const targetStats =
+      getKnowledgeState(
+        trainingPoint,
+        history,
+        loadRetestHistory()
+      );
+
     const focus = getTrainingFocus(
-      point,
+      trainingPoint,
       history,
-      stats.state
+      targetStats.state
     );
+
     const training = generateNonRepeatedTargetedTraining(
-      point,
+      trainingPoint,
       focus,
       sessionIndex || 1
     );
@@ -3208,7 +3443,13 @@
     activeTraining = {
       training_session_id:
         createTrainingSessionId(),
-      knowledge_point: point,
+      knowledge_point: trainingPoint,
+      requested_knowledge_point:
+        plan.requestedPoint,
+      redirected_from_prerequisite:
+        plan.redirected,
+      prerequisite_point:
+        plan.prerequisitePoint || null,
       focus: focus,
       question: training.question,
       correct_answer: training.correct_answer,
@@ -3228,6 +3469,22 @@
 
     trainingCard.style.display = "block";
     trainingFocus.textContent =
+      (
+        plan.redirected
+          ? "知识路径：" +
+            plan.requestedPoint +
+            " → 先练" +
+            plan.prerequisiteLabel +
+            "（" +
+            plan.prerequisiteStateText +
+            "）"
+          : ""
+      ) +
+      (
+        plan.redirected
+          ? " ｜ "
+          : ""
+      ) +
       focus.title +
       (
         focus.evidenceLabel
@@ -3632,6 +3889,13 @@
         new Date().toISOString(),
       knowledge_point:
         activeTraining.knowledge_point,
+      requested_knowledge_point:
+        activeTraining.requested_knowledge_point ||
+        activeTraining.knowledge_point,
+      redirected_from_prerequisite:
+        Boolean(
+          activeTraining.redirected_from_prerequisite
+        ),
       focus:
         activeTraining.focus.title,
       question:
@@ -3687,6 +3951,13 @@
         new Date().toISOString(),
       knowledge_point:
         activeTraining.knowledge_point,
+      requested_knowledge_point:
+        activeTraining.requested_knowledge_point ||
+        activeTraining.knowledge_point,
+      redirected_from_prerequisite:
+        Boolean(
+          activeTraining.redirected_from_prerequisite
+        ),
       focus:
         activeTraining.focus.title,
       question:
@@ -4107,6 +4378,13 @@
         new Date().toISOString(),
       knowledge_point:
         activeTraining.knowledge_point,
+      requested_knowledge_point:
+        activeTraining.requested_knowledge_point ||
+        activeTraining.knowledge_point,
+      redirected_from_prerequisite:
+        Boolean(
+          activeTraining.redirected_from_prerequisite
+        ),
       focus:
         activeTraining.focus.title,
       question:
@@ -4275,7 +4553,9 @@
       const nextIndex =
         (activeTraining.sessionIndex || 1) + 1;
 
-      const point = activeTraining.knowledge_point;
+      const point =
+        activeTraining.requested_knowledge_point ||
+        activeTraining.knowledge_point;
       const history = loadHistory();
 
       const stats =
