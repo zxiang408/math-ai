@@ -239,6 +239,15 @@
       margin-bottom: 6px;
     }
 
+    .training-adaptive-feedback {
+      margin-top: 10px;
+      padding: 10px 12px;
+      border-radius: 8px;
+      background: #fff;
+      border: 1px solid #d0d5dd;
+      line-height: 1.7;
+    }
+
     .ability-empty {
       color: #667085;
       padding: 6px 0;
@@ -511,7 +520,7 @@
 
     <div class="notice">
 
-      当前是 V0.6.2。
+      当前是 V0.6.3。
       <br>
       已接入 OpenRouter 免费模型路由，用于错题照片识别与 AI 分析。
       <br>
@@ -568,6 +577,12 @@
     <div class="training-hint" id="trainingHint">
       <div class="training-hint-title">💡 一步一步想</div>
       <div id="trainingHintText"></div>
+
+      <div
+        class="training-adaptive-feedback"
+        id="trainingAdaptiveFeedback"
+        style="display: none;"
+      ></div>
 
       <input
         class="retest-answer-input"
@@ -638,9 +653,9 @@
   </div>
 
   <div class="footer">
-    小学数学 AI · V0.6.2
+    小学数学 AI · V0.6.3
     <br>
-    <span id="appVersion">程序版本：V0.6.2</span>
+    <span id="appVersion">程序版本：V0.6.3</span>
   </div>
 
 </div>
@@ -741,6 +756,9 @@
 
   const trainingHintText =
     document.getElementById("trainingHintText");
+
+  const trainingAdaptiveFeedback =
+    document.getElementById("trainingAdaptiveFeedback");
 
   const trainingStepAnswer =
     document.getElementById("trainingStepAnswer");
@@ -2135,6 +2153,96 @@
     });
   }
 
+  function getAdaptiveTrainingFeedback(
+    point,
+    stepIndex,
+    studentAnswer,
+    step,
+    training
+  ) {
+    const value = normalizeTrainingStepAnswer(studentAnswer);
+
+    if (point === "数与代数 / 倍数关系") {
+      const question = String(training.question || "");
+      const multipleMatch = question.match(/(\d+)倍/);
+      const sumMatch = question.match(/和是(\d+)/);
+      const multiple = multipleMatch ? Number(multipleMatch[1]) : null;
+      const sum = sumMatch ? Number(sumMatch[1]) : null;
+
+      if (multiple !== null && sum !== null) {
+        if (stepIndex === 0) {
+          if (value === "1") {
+            return "你想到“1份”了，这是较小数的份数。现在题目问的是：较大的数是几份？再看“" +
+              multiple + "倍”。";
+          }
+          if (value === String(multiple + 1)) {
+            return "“" + (multiple + 1) +
+              "份”是两个数合起来的总份数，还不是较大数的份数。题目说较大的数是较小数的" +
+              multiple + "倍，所以较大数是" + multiple + "份。";
+          }
+          return "先盯住题目里的“" + multiple +
+            "倍”。把较小数看成1份，那么较大的数应该是几份？";
+        }
+
+        if (stepIndex === 1) {
+          if (value === String(multiple)) {
+            return "你找到较大数的" + multiple +
+              "份了，但这一步问的是两个数合起来的总份数。别忘了较小数还有1份。";
+          }
+          if (sum !== null && value === String(sum)) {
+            return "“" + sum +
+              "”是两个数的总和，不是份数。这一步先只数份：1份 + " +
+              multiple + "份。";
+          }
+          return "再把两个数的份数放在一起：较小数1份，加上较大数" +
+            multiple + "份，一共是多少份？";
+        }
+
+        if (stepIndex === 2) {
+          if (sum !== null && value === String(sum)) {
+            return "“" + sum +
+              "”是总和。现在要把总和平均分成刚才求出的总份数，计算“总和÷总份数”。";
+          }
+          if (value === String(multiple + 1)) {
+            return "“" + (multiple + 1) +
+              "”是总份数，还没有算出1份是多少。再用总和除以总份数。";
+          }
+          return "最后一步，把题目给出的总和除以总份数，求出1份，也就是较小的数。";
+        }
+      }
+    }
+
+    if (point === "图形与几何 / 正方形面积") {
+      if (stepIndex === 0) {
+        if (value === "1") {
+          return "这里问的是边长扩大了几倍，不是原来的1倍。题目已经告诉我们边长扩大2倍。";
+        }
+        return "先看题目中的“边长扩大2倍”，这里的变化倍数就是2。";
+      }
+
+      if (stepIndex === 1) {
+        return "面积用两个边长相乘，所以要把两个“2”相乘，而不是只写一个2。";
+      }
+    }
+
+    if (point === "数与代数 / 积的变化规律") {
+      const question = String(training.question || "");
+      const factorMatch = question.match(/扩大(\d+)倍/);
+      const factor = factorMatch ? String(Number(factorMatch[1])) : null;
+
+      if (factor) {
+        if (stepIndex === 0 && normalizeTrainingStepAnswer(studentAnswer) === "0") {
+          return "不变不是0倍。没有变化可以理解为原来的1倍。";
+        }
+        if (stepIndex === 1) {
+          return "再把两个因数的变化合在一起考虑，才能判断积最终怎么变化。";
+        }
+      }
+    }
+
+    return "这一步还不正确。先回到上面的提示，只解决当前这一步，不要急着做后面的计算。";
+  }
+
   function showCurrentTrainingStep() {
     if (!activeTraining) return;
 
@@ -2160,6 +2268,8 @@
     submitTrainingStepButton.disabled = false;
     trainingStepResult.style.display = "none";
     trainingStepResult.textContent = "";
+    trainingAdaptiveFeedback.style.display = "none";
+    trainingAdaptiveFeedback.textContent = "";
 
     hintTrainingButton.style.display = "none";
     retryTrainingButton.style.display = "none";
@@ -2246,7 +2356,18 @@
     if (!passed) {
       trainingStepResult.style.display = "block";
       trainingStepResult.textContent =
-        "❌ 这一步还不对，再想一想。先别看后面的步骤。";
+        "❌ 这一步还不对。先别看后面的步骤。";
+
+      trainingAdaptiveFeedback.style.display = "block";
+      trainingAdaptiveFeedback.textContent =
+        getAdaptiveTrainingFeedback(
+          activeTraining.knowledge_point,
+          index,
+          studentAnswer,
+          step,
+          activeTraining
+        );
+
       trainingStatus.textContent =
         "答对当前这一步后，才能进入下一步。";
       trainingStepAnswer.select();
@@ -2256,6 +2377,8 @@
     trainingStepResult.style.display = "block";
     trainingStepResult.textContent =
       "✅ 这一步正确！";
+    trainingAdaptiveFeedback.style.display = "none";
+    trainingAdaptiveFeedback.textContent = "";
 
     activeTraining.currentStep = index + 1;
 
