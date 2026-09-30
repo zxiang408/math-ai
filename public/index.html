@@ -7301,9 +7301,34 @@ window.MathAILearningModel = {
   function renderHistory() {
     const history = loadHistory();
 
-    renderAbilityProfile(history);
-    renderKnowledgeGraph(history);
-    renderKnowledgeOverview(history);
+    // V0.17 的能力模型/知识结构属于增强层，任何异常都不能阻断基础错题库。
+    try {
+      renderAbilityProfile(history);
+    } catch (error) {
+      console.error("能力档案渲染失败，已隔离，不影响基础功能：", error);
+
+      if (learningDataSummary) {
+        learningDataSummary.textContent =
+          "统一学习数据模型暂时不可用，但本地错题、复测与训练数据仍然保留。";
+      }
+
+      if (smartTrainingRecommendation) {
+        smartTrainingRecommendation.textContent =
+          "智能训练增强层暂时不可用，基础错题与训练功能继续工作。";
+      }
+    }
+
+    try {
+      renderKnowledgeGraph(history);
+    } catch (error) {
+      console.error("知识结构渲染失败，已隔离，不影响基础功能：", error);
+    }
+
+    try {
+      renderKnowledgeOverview(history);
+    } catch (error) {
+      console.error("知识点概况渲染失败，已隔离，不影响基础功能：", error);
+    }
 
     historySummary.textContent =
       "已保存 " + history.length + " 道错题";
