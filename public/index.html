@@ -5970,6 +5970,71 @@ window.MathAILearningModel = {
         activeTraining.sessionIndex
     });
 
+    /*
+     * V0.21 修复：
+     * 当孩子整题首次独立答对时，这本身就是当前调度微技能的一条
+     * “独立正确”证据。之前只记录 overall_independent_answer，
+     * 导致连续答对多道题后，微技能仍显示只有1轮。
+     *
+     * 现在同时写入当前微技能证据；两个事件共用同一个 session，
+     * 不改变原有整体作答统计。
+     */
+    if (passed && activeTraining.micro_skill_key) {
+      saveTrainingAttempt({
+        id:
+          String(Date.now()) +
+          "-skill-" +
+          Math.random().toString(36).slice(2, 8),
+        created_at:
+          new Date().toISOString(),
+        knowledge_point:
+          activeTraining.knowledge_point,
+        requested_knowledge_point:
+          activeTraining.requested_knowledge_point ||
+          activeTraining.knowledge_point,
+        redirected_from_prerequisite:
+          Boolean(
+            activeTraining.redirected_from_prerequisite
+          ),
+        focus:
+          activeTraining.focus.title,
+        difficulty:
+          activeTraining.difficulty,
+        difficulty_label:
+          activeTraining.difficulty_label,
+        difficulty_reason:
+          activeTraining.difficulty_reason,
+        question:
+          activeTraining.question,
+        correct_answer:
+          activeTraining.correct_answer,
+        student_answer:
+          studentAnswer,
+        passed:
+          true,
+        attempt_number:
+          activeTraining.attemptCount,
+        attempt_type:
+          "micro_skill_initial_answer",
+        training_session_id:
+          activeTraining.training_session_id,
+        evidence_key:
+          activeTraining.micro_skill_key,
+        evidence_label:
+          activeTraining.micro_skill_label,
+        step_number:
+          0,
+        step_attempt_number:
+          1,
+        step_mode:
+          "normal",
+        simplification_used:
+          false,
+        session_index:
+          activeTraining.sessionIndex
+      });
+    }
+
     trainingResult.style.display = "block";
 
     if (passed) {
@@ -5990,6 +6055,9 @@ window.MathAILearningModel = {
       submitTrainingButton.disabled = true;
       recordTrainingCompletion();
       applyTrainingNextAction();
+
+      // 完成本轮后立即刷新能力档案，让新的微技能证据马上可见。
+      renderHistory();
       return;
     }
 
@@ -6317,6 +6385,9 @@ window.MathAILearningModel = {
     recordTrainingCompletion();
 
     applyTrainingNextAction();
+
+    // 分步训练完成后立即刷新能力档案。
+    renderHistory();
   }
 
   async function submitTrainingStep() {
