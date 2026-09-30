@@ -1,3 +1,5 @@
+(function () {
+
 /**
  * Math AI — V0.17 Unified Learning Data Model
  *
@@ -884,3 +886,6 @@ window.MathAILearningModel = {
   deriveLearnerState: deriveLearnerState,
   getLearningModelContract: getLearningModelContract
 };
+
+
+})();
