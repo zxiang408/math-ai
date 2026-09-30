@@ -5,8 +5,10 @@ on:
     paths:
       - "src/index.js"
       - "src/cloud-archive.js"
+      - "public/index.html"
       - "supabase/**"
       - "tests/v023-cloud-archive.spec.mjs"
+      - "tests/v023-ui-sync.spec.mjs"
       - ".github/workflows/v023-cloud-archive.yml"
   workflow_dispatch:
 
@@ -22,5 +24,18 @@ jobs:
         with:
           node-version: 20
 
-      - name: Run cloud archive regression
+      - name: Run worker cloud archive regression
         run: node tests/v023-cloud-archive.spec.mjs
+
+      - name: Install Playwright
+        run: npm install --no-save playwright
+
+      - name: Start static server
+        run: |
+          python3 -m http.server 4173 --directory public > /tmp/math-ai-http.log 2>&1 &
+          echo $! > /tmp/math-ai-http.pid
+
+      - name: Run browser sync regression
+        env:
+          TEST_URL: http://127.0.0.1:4173/index.html
+        run: node tests/v023-ui-sync.spec.mjs
