@@ -931,7 +931,10 @@
   import {
     buildUnifiedLearningModel,
     summarizeUnifiedLearningModel,
-    LEARNING_MODEL_VERSION
+    LEARNING_MODEL_VERSION,
+    deriveKnowledgePointState,
+    deriveMicroSkillState,
+    deriveReviewSchedule
   } from "./learning-model.js";
 
 
@@ -2017,171 +2020,15 @@
     retestHistory,
     knowledgeState
   ) {
-    const matching = retestHistory
-      .filter(function (item) {
-        return standardizeKnowledgePoints(
-          item.knowledge_points
-        ).includes(point);
-      })
-      .slice()
-      .sort(function (a, b) {
-        return (
-          new Date(a.created_at || 0) -
-          new Date(b.created_at || 0)
-        );
-      });
+    const model =
+      buildCurrentUnifiedLearningModel();
 
-    const spacedPassed = matching.filter(function (item) {
-      return (
-        item.test_type === "spaced_retest" &&
-        item.passed === true
-      );
-    });
-
-    const spacedFailed = matching.some(function (item) {
-      return (
-        item.test_type === "spaced_retest" &&
-        item.passed === false
-      );
-    });
-
-    const latestAttempt =
-      matching.length > 0
-        ? matching[matching.length - 1]
-        : null;
-
-    const latestSpacedPassed =
-      spacedPassed.length > 0
-        ? spacedPassed[spacedPassed.length - 1]
-        : null;
-
-    let dueAt = null;
-    let intervalDays = null;
-    let stage = 0;
-
-    if (
-      latestSpacedPassed
-    ) {
-      stage = spacedPassed.length;
-      const nextIndex = Math.min(
-        stage,
-        RETENTION_INTERVALS_DAYS.length - 1
-      );
-      intervalDays =
-        RETENTION_INTERVALS_DAYS[nextIndex];
-
-      dueAt = new Date(
-        new Date(
-          latestSpacedPassed.created_at
-        ).getTime() +
-        intervalDays * 86400000
-      ).toISOString();
-    } else if (
-      knowledgeState.state === "initial_mastery" &&
-      latestAttempt &&
-      latestAttempt.passed === true
-    ) {
-      stage = 0;
-      intervalDays =
-        RETENTION_INTERVALS_DAYS[0];
-
-      dueAt = new Date(
-        new Date(
-          latestAttempt.created_at
-        ).getTime() +
-        intervalDays * 86400000
-      ).toISOString();
-    }
-
-    if (knowledgeState.state === "not_mastered" ||
-        knowledgeState.state === "learning" ||
-        knowledgeState.state === "unstable") {
-      return {
-        state: "building",
-        stateText: "尚未进入长期保持",
-        dueAt: null,
-        intervalDays: null,
-        daysUntilDue: null,
-        spacedPasses: spacedPassed.length,
-        spacedFailures: spacedFailed ? 1 : 0,
-        stage: stage
-      };
-    }
-
-    if (dueAt) {
-      const daysUntilDue =
-        getDaysFromNow(dueAt);
-
-      if (
-        knowledgeState.state === "unstable" ||
-        knowledgeState.state === "recovering"
-      ) {
-        return {
-          state: "recovering",
-          stateText: "恢复中",
-          dueAt: dueAt,
-          intervalDays: intervalDays,
-          daysUntilDue: daysUntilDue,
-          spacedPasses: spacedPassed.length,
-          spacedFailures: spacedFailed ? 1 : 0,
-          stage: stage
-        };
-      }
-
-      if (
-        daysUntilDue !== null &&
-        daysUntilDue > 0
-      ) {
-        return {
-          state: "retaining",
-          stateText: "保持中",
-          dueAt: dueAt,
-          intervalDays: intervalDays,
-          daysUntilDue: daysUntilDue,
-          spacedPasses: spacedPassed.length,
-          spacedFailures: spacedFailed ? 1 : 0,
-          stage: stage
-        };
-      }
-
-      if (
-        daysUntilDue !== null &&
-        daysUntilDue >= -intervalDays
-      ) {
-        return {
-          state: "due",
-          stateText: "到期复测",
-          dueAt: dueAt,
-          intervalDays: intervalDays,
-          daysUntilDue: daysUntilDue,
-          spacedPasses: spacedPassed.length,
-          spacedFailures: spacedFailed ? 1 : 0,
-          stage: stage
-        };
-      }
-
-      return {
-        state: "risk",
-        stateText: "遗忘风险",
-        dueAt: dueAt,
-        intervalDays: intervalDays,
-        daysUntilDue: daysUntilDue,
-        spacedPasses: spacedPassed.length,
-        spacedFailures: spacedFailed ? 1 : 0,
-        stage: stage
-      };
-    }
-
-    return {
-      state: "building",
-      stateText: "尚未进入长期保持",
-      dueAt: null,
-      intervalDays: null,
-      daysUntilDue: null,
-      spacedPasses: spacedPassed.length,
-      spacedFailures: spacedFailed ? 1 : 0,
-      stage: stage
-    };
+    return deriveReviewSchedule(
+      model,
+      point,
+      knowledgeState,
+      RETENTION_INTERVALS_DAYS
+    );
   }
 
   function renderRetentionStatus(point, retention) {
@@ -2246,82 +2093,13 @@
   }
 
   function getKnowledgeState(point, history, retestHistory) {
-    const matchingMistakes = history.filter(function (item) {
-      return standardizeKnowledgePoints(item.knowledge_points).includes(point);
-    });
+    const model =
+      buildCurrentUnifiedLearningModel();
 
-    const hasKnowledgeEvidence = matchingMistakes.some(function (item) {
-      return standardizeErrorNature(
-        item.error_nature,
-        item.error_type
-      ) === "知识理解不足";
-    });
-
-    const stats = getRetestStats(point, retestHistory);
-
-    if (!hasKnowledgeEvidence) {
-      return {
-        state: "observed",
-        stateText: "待观察",
-        stats: stats
-      };
-    }
-
-    let state = "not_mastered";
-    let previousDate = null;
-
-    stats.history.forEach(function (attempt) {
-      const currentDate = new Date(attempt.created_at || 0);
-      const daysSincePrevious =
-        previousDate && !Number.isNaN(currentDate.getTime())
-          ? (currentDate.getTime() - previousDate.getTime()) / 86400000
-          : null;
-
-      const isCorrect = attempt.passed === true;
-      const isSpaced =
-        attempt.test_type === "spaced_retest" ||
-        (daysSincePrevious !== null && daysSincePrevious >= 3);
-
-      if (state === "not_mastered") {
-        state = isCorrect ? "learning" : "not_mastered";
-      } else if (state === "learning") {
-        state = isCorrect ? "initial_mastery" : "not_mastered";
-      } else if (state === "initial_mastery") {
-        state = isCorrect ? "initial_mastery" : "unstable";
-      } else if (state === "unstable") {
-        state = isCorrect ? "recovering" : "unstable";
-      } else if (state === "recovering") {
-        if (!isCorrect) {
-          state = "unstable";
-        } else if (isSpaced) {
-          state = "mastered";
-        } else {
-          state = "recovering";
-        }
-      } else if (state === "mastered") {
-        state = isCorrect ? "mastered" : "unstable";
-      }
-
-      if (!Number.isNaN(currentDate.getTime())) {
-        previousDate = currentDate;
-      }
-    });
-
-    const stateTextMap = {
-      not_mastered: "未掌握",
-      learning: "学习中",
-      initial_mastery: "初步掌握",
-      unstable: "掌握不稳定",
-      recovering: "恢复中",
-      mastered: "已掌握",
-      observed: "待观察"
-    };
-
-    return {
-      state: state,
-      stateText: stateTextMap[state] || "未掌握",
-      stats: stats
-    };
+    return deriveKnowledgePointState(
+      model,
+      point
+    );
   }
 
   function getTrainingEvidenceFocus(point) {
@@ -5446,137 +5224,14 @@
     evidenceKey,
     trainingHistory
   ) {
-    const sessions =
-      getTrainingEvidenceSessions(
-        point,
-        evidenceKey,
-        trainingHistory
-      );
+    const model =
+      buildCurrentUnifiedLearningModel();
 
-    if (sessions.length === 0) {
-      return {
-        state: "insufficient",
-        stateText: "证据不足",
-        sessions: 0,
-        independentPasses: 0,
-        promptedSessions: 0
-      };
-    }
-
-    const independentPasses =
-      sessions.filter(function (session) {
-        return session.firstTryIndependent;
-      }).length;
-
-    const promptedSessions =
-      sessions.filter(function (session) {
-        return session.prompted;
-      }).length;
-
-    const recent =
-      sessions.slice(-3);
-
-    const latest =
-      sessions[sessions.length - 1];
-
-    const recentIndependent =
-      recent.length >= 3 &&
-      recent.every(function (session) {
-        return session.firstTryIndependent &&
-          !session.prompted;
-      });
-
-    if (
-      latest.prompted &&
-      !latest.firstTryIndependent
-    ) {
-      return {
-        state: "prompted",
-        stateText: "仍需提示",
-        sessions: sessions.length,
-        independentPasses: independentPasses,
-        promptedSessions: promptedSessions
-      };
-    }
-
-    if (recentIndependent) {
-      return {
-        state: "mastered",
-        stateText: "已掌握",
-        sessions: sessions.length,
-        independentPasses: independentPasses,
-        promptedSessions: promptedSessions
-      };
-    }
-
-    return {
-      state: "forming",
-      stateText: "正在形成",
-      sessions: sessions.length,
-      independentPasses: independentPasses,
-      promptedSessions: promptedSessions
-    };
-  }
-
-  function getTrainingAbilityDefinitions(point) {
-    const definitions = {
-      "数与代数 / 倍数关系": [
-        {
-          key: "large_number_parts",
-          label: "倍数 → 份数"
-        },
-        {
-          key: "total_parts",
-          label: "总份数"
-        },
-        {
-          key: "unit_value",
-          label: "总和 ÷ 总份数"
-        }
-      ],
-      "图形与几何 / 正方形面积": [
-        {
-          key: "side_scale",
-          label: "边长变化倍数"
-        },
-        {
-          key: "area_scale_or_calculation",
-          label: "面积变化 / 计算"
-        }
-      ],
-      "数与代数 / 积的变化规律": [
-        {
-          key: "unchanged_factor",
-          label: "识别不变因数"
-        },
-        {
-          key: "combined_factor_change",
-          label: "合并两个因数的变化"
-        }
-      ],
-      "数与代数 / 四则运算": [
-        {
-          key: "multiplication_first",
-          label: "先算乘法"
-        },
-        {
-          key: "subtraction_after_multiplication",
-          label: "再算减法"
-        }
-      ],
-      "数与代数 / 小数": [
-        {
-          key: "decimal_alignment",
-          label: "小数点对齐"
-        },
-        {
-          key: "decimal_calculation",
-          label: "小数计算"
-        }
-      ]
-    };
-
-    return definitions[point] || [];
+    return deriveMicroSkillState(
+      model,
+      point,
+      evidenceKey
+    );
   }
 
   function renderTrainingAbilityMap(
@@ -6025,6 +5680,17 @@
     smartTrainingButton.disabled = false;
   }
 
+
+  function buildCurrentUnifiedLearningModel() {
+    return buildUnifiedLearningModel(
+      {
+        mistakes: loadHistory(),
+        retests: loadRetestHistory(),
+        training: loadTrainingHistory()
+      },
+      standardizeKnowledgePoint
+    );
+  }
 
   function renderUnifiedLearningSummary() {
     if (!learningDataSummary) {
