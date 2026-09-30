@@ -520,7 +520,7 @@
 
     <div class="notice">
 
-      当前是 V0.6.4。
+      当前是 V0.7.0。
       <br>
       已接入 OpenRouter 免费模型路由，用于错题照片识别与 AI 分析。
       <br>
@@ -566,6 +566,9 @@
       </button>
       <button class="secondary" id="retryTrainingButton" style="display: none;">
         🔁 再答一次
+      </button>
+      <button class="primary" id="nextTrainingButton" style="display: none;">
+        ➡️ 再练一道
       </button>
       <button class="secondary" id="closeTrainingButton">
         关闭
@@ -653,9 +656,9 @@
   </div>
 
   <div class="footer">
-    小学数学 AI · V0.6.4
+    小学数学 AI · V0.7.0
     <br>
-    <span id="appVersion">程序版本：V0.6.4</span>
+    <span id="appVersion">程序版本：V0.7.0</span>
   </div>
 
 </div>
@@ -774,6 +777,9 @@
 
   const retryTrainingButton =
     document.getElementById("retryTrainingButton");
+
+  const nextTrainingButton =
+    document.getElementById("nextTrainingButton");
 
   const TRAINING_KEY =
     "math-ai-v0.6-training-history";
@@ -1303,7 +1309,7 @@
     };
   }
 
-  function generateTargetedTraining(point, focus) {
+  function generateTargetedTraining(point, focus, sessionIndex) {
     function randInt(min, max) {
       return Math.floor(Math.random() * (max - min + 1)) + min;
     }
@@ -1312,8 +1318,14 @@
       ? focus.title
       : "基础巩固训练";
 
+    const round =
+      Math.max(1, Number(sessionIndex || 1));
+
+    // 第二道及以后，在掌握基本方法的情况下尽量增加轻度变式，
+    // 避免孩子只是记住上一道题的数字。
+
     if (point === "图形与几何 / 正方形面积") {
-      if (focusTitle === "概念与方法训练") {
+      if (focusTitle === "概念与方法训练" && round === 1) {
         const side = randInt(4, 10);
         return {
           question:
@@ -1341,6 +1353,18 @@
       }
 
       const side = randInt(3, 12);
+      const compareSide = round >= 2 ? randInt(4, 10) : side;
+      if (round >= 2 && focusTitle !== "概念与方法训练") {
+        return {
+          question:
+            "一个正方形边长是" + compareSide +
+            "厘米，边长扩大2倍后，面积扩大多少倍？",
+          correct_answer: "4倍",
+          explanation:
+            "正方形面积跟边长的平方有关。边长扩大2倍，面积扩大2×2=4倍。"
+        };
+      }
+
       return {
         question:
           "一个正方形的边长是" + side +
@@ -1358,6 +1382,21 @@
       const large = small * multiple;
       const sum = small + large;
 
+      if (round >= 2 && focusTitle === "概念与方法训练") {
+        return {
+          question:
+            "甲数是乙数的" + multiple +
+            "倍。如果甲、乙两数的和是" + sum +
+            "，乙数是多少？",
+          correct_answer: String(small),
+          explanation:
+            "把乙数看成1份，甲数就是" + multiple +
+            "份，一共" + (multiple + 1) +
+            "份，乙数为" + sum + "÷" + (multiple + 1) +
+            "=" + small + "。"
+        };
+      }
+
       if (focusTitle === "概念与方法训练") {
         return {
           question:
@@ -1374,6 +1413,21 @@
       }
 
       if (focusTitle === "稳定性变式训练") {
+        if (round % 2 === 0) {
+          return {
+            question:
+              "甲数是乙数的" + multiple +
+              "倍。如果甲、乙两数的和是" + sum +
+              "，乙数是多少？",
+            correct_answer: String(small),
+            explanation:
+              "把乙数看成1份，甲数是" + multiple +
+              "份，一共" + (multiple + 1) +
+              "份，所以乙数是" + sum + "÷" +
+              (multiple + 1) + "=" + small + "。"
+          };
+        }
+
         return {
           question:
             "甲数是乙数的" + multiple + "倍。甲数比乙数多" +
@@ -1636,7 +1690,7 @@
     ];
   }
 
-  function showTrainingPanel(point, history, stats) {
+  function showTrainingPanel(point, history, stats, sessionIndex) {
     const focus = getTrainingFocus(
       point,
       history,
@@ -1644,7 +1698,8 @@
     );
     const training = generateTargetedTraining(
       point,
-      focus
+      focus,
+      sessionIndex || 1
     );
 
     if (!training) {
@@ -1666,12 +1721,14 @@
       currentStep: 0,
       attemptCount: 0,
       stepWrongCounts: {},
-      stepMode: "normal"
+      stepMode: "normal",
+      sessionIndex: Math.max(1, Number(sessionIndex || 1))
     };
 
     trainingCard.style.display = "block";
     trainingFocus.textContent =
-      focus.title + " ｜ " + focus.reason;
+      focus.title + " ｜ " + focus.reason +
+      " ｜ 第" + activeTraining.sessionIndex + "道";
     trainingStatus.textContent =
       "题目已生成，请让孩子独立完成。";
     trainingQuestion.textContent =
@@ -1681,6 +1738,7 @@
     submitTrainingButton.disabled = false;
     hintTrainingButton.style.display = "none";
     retryTrainingButton.style.display = "none";
+    nextTrainingButton.style.display = "none";
     trainingHint.style.display = "none";
     trainingHintText.textContent = "";
     trainingStepAnswer.value = "";
@@ -2107,6 +2165,7 @@
       trainingStepResult.style.display = "none";
       trainingAnswer.disabled = true;
       submitTrainingButton.disabled = true;
+      nextTrainingButton.style.display = "inline-block";
       return;
     }
 
@@ -2426,6 +2485,8 @@
 
     trainingStatus.textContent =
       "本次训练已完成；训练结果不会直接改变能力状态。";
+
+    nextTrainingButton.style.display = "inline-block";
   }
 
   function submitTrainingStep() {
@@ -2613,6 +2674,33 @@
     }
   );
 
+  nextTrainingButton.addEventListener(
+    "click",
+    function () {
+      if (!activeTraining) return;
+
+      const nextIndex =
+        (activeTraining.sessionIndex || 1) + 1;
+
+      const point = activeTraining.knowledge_point;
+      const history = loadHistory();
+
+      const stats =
+        getKnowledgeState(
+          point,
+          history,
+          loadRetestHistory()
+        );
+
+      showTrainingPanel(
+        point,
+        history,
+        stats,
+        nextIndex
+      );
+    }
+  );
+
   closeTrainingButton.addEventListener(
     "click",
     function () {
@@ -2621,6 +2709,7 @@
       trainingHint.style.display = "none";
       hintTrainingButton.style.display = "none";
       retryTrainingButton.style.display = "none";
+      nextTrainingButton.style.display = "none";
       trainingStepAnswer.value = "";
       trainingStepResult.style.display = "none";
     }
