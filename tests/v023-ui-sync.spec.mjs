@@ -156,6 +156,11 @@ try {
   assert.equal(mergedCounts.mistakes, 1);
   assert.equal(mergedCounts.retests, 1);
 
+  await page.waitForFunction(() => {
+    const status = document.getElementById("cloudSyncStatus")?.textContent || "";
+    return status.includes("云端学习档案已连接并同步");
+  });
+
   await page.getByRole("button", { name: "☁️ 立即同步" }).click();
 
   await page.waitForFunction(() => {
