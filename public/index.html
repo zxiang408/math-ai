@@ -601,9 +601,12 @@
       standardizeErrorType(errorType);
 
     if (
-      text === "偶然失误" ||
-      text === "知识理解不足" ||
-      text === "无法判断"
+      text &&
+      text !== "无法判断" &&
+      (
+        text === "偶然失误" ||
+        text === "知识理解不足"
+      )
     ) {
       return text;
     }
@@ -732,6 +735,16 @@
         const analysisText =
           String(item.analysis || "");
 
+        const normalizedType =
+          standardizeErrorType(errorType);
+
+        if (
+          normalizedType !== errorType
+        ) {
+          errorType = normalizedType;
+          changed = true;
+        }
+
         if (
           errorType === "审题错误" &&
           /最终结果.*对|结果.*正确|误写|抄写|写成/.test(analysisText)
@@ -740,18 +753,11 @@
           errorNature = "偶然失误";
           changed = true;
         } else {
-          const normalizedType =
-            standardizeErrorType(errorType);
           const normalizedNature =
             standardizeErrorNature(
               errorNature,
-              normalizedType
+              errorType
             );
-
-          if (normalizedType !== errorType) {
-            errorType = normalizedType;
-            changed = true;
-          }
 
           if (normalizedNature !== errorNature) {
             errorNature = normalizedNature;
@@ -828,6 +834,32 @@
     tag.className = "history-tag";
     tag.textContent = text;
     return tag;
+  }
+
+  function renderHistoryTags(container, points) {
+    container.textContent = "";
+
+    if (
+      !Array.isArray(points) ||
+      points.length === 0
+    ) {
+      container.appendChild(
+        createHistoryTag("未识别到明确知识点")
+      );
+      return;
+    }
+
+    points.forEach(function (point, index) {
+      if (index > 0) {
+        const separator = document.createElement("span");
+        separator.textContent = " ";
+        container.appendChild(separator);
+      }
+
+      container.appendChild(
+        createHistoryTag(point)
+      );
+    });
   }
 
   function getAbilityStatus(stats) {
@@ -1042,20 +1074,10 @@
       const tags = document.createElement("div");
       tags.className = "history-tags";
 
-      if (
-        Array.isArray(item.knowledge_points) &&
-        item.knowledge_points.length > 0
-      ) {
-        item.knowledge_points.forEach(function (point) {
-          tags.appendChild(
-            createHistoryTag(point)
-          );
-        });
-      } else {
-        tags.appendChild(
-          createHistoryTag("未识别到明确知识点")
-        );
-      }
+      renderHistoryTags(
+        tags,
+        item.knowledge_points
+      );
 
       const actions = document.createElement("div");
       actions.className = "history-actions";
