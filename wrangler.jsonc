@@ -3,6 +3,9 @@
   "main": "./src/index.js",
   "compatibility_date": "2026-09-29",
   "keep_vars": true,
+  "secrets": {
+    "required": ["SUPABASE_SECRET_KEY"]
+  },
   "observability": {
     "enabled": true
   },
