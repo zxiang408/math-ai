@@ -211,10 +211,9 @@ confidence 为 0 到 1 之间的小数，表示你对整道题识别与分析的
           "X-Title": "小学数学 AI",
         },
         body: JSON.stringify({
-          model: "google/gemma-4-26b-a4b-it:free",
+          model: "google/gemma-4-31b-it:free",
           temperature: 0.2,
           max_tokens: 800,
-          response_format: { type: "json_object" },
           messages: [
           {
             role: "user",
@@ -267,12 +266,20 @@ confidence 为 0 到 1 之间的小数，表示你对整道题识别与分析的
   }
 
   if (!upstreamResponse.ok) {
+    const errorObject = upstreamBody?.error || {};
     const message =
-      upstreamBody?.error?.message ||
+      errorObject?.message ||
       upstreamBody?.message ||
       "OpenRouter 请求失败。";
+
     return jsonResponse(
-      { error: message, upstream_status: upstreamResponse.status },
+      {
+        error: message,
+        upstream_status: upstreamResponse.status,
+        upstream_code: errorObject?.code ?? null,
+        upstream_metadata:
+          errorObject?.metadata ?? upstreamBody?.metadata ?? null,
+      },
       502,
       request,
     );
