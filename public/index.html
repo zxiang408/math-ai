@@ -791,7 +791,7 @@
 
     <div class="notice">
 
-      当前是 V0.19.0。
+      当前是 V0.20.0。
       <br>
       已加入可开关的 Mock AI 开发测试模式；默认不调用外部 AI，可继续验证错题库、能力档案、针对性训练、分步骤辅导与复测闭环。
       <br>
@@ -953,9 +953,9 @@
   </div>
 
   <div class="footer">
-    小学数学 AI · V0.19.0
+    小学数学 AI · V0.20.0
     <br>
-    <span id="appVersion">程序版本：V0.19.0 · Mock AI 可切换 · 动态难度</span>
+    <span id="appVersion">程序版本：V0.20.0 · Mock AI 可切换 · 微技能自适应</span>
   </div>
 
 </div>
@@ -3487,6 +3487,248 @@ window.MathAILearningModel = {
   }
 
   /*
+   * V0.20 微技能训练规划器
+   *
+   * V0.19 解决“整道题难不难”；
+   * V0.20 进一步解决“到底练哪一个微技能”。
+   *
+   * 每个知识点先确定一个具体微技能，再独立计算该微技能的训练难度。
+   */
+  function getDefaultTrainingMicroSkill(point) {
+    const definitions =
+      getTrainingAbilityDefinitions(point);
+
+    return definitions.length > 0
+      ? {
+          key: definitions[0].key,
+          label: definitions[0].label,
+          state: "insufficient",
+          stateText: "证据不足"
+        }
+      : null;
+  }
+
+  function getMicroSkillTrainingPlan(point, focus, trainingHistory) {
+    const definitions =
+      getTrainingAbilityDefinitions(point);
+
+    if (!definitions.length) {
+      return {
+        key: null,
+        label: "",
+        difficulty: 1,
+        difficultyLabel: "基础",
+        reason: "当前知识点尚未配置微技能训练定义。"
+      };
+    }
+
+    const selectedKey =
+      focus?.evidenceKey &&
+      definitions.some(function (item) {
+        return item.key === focus.evidenceKey;
+      })
+        ? focus.evidenceKey
+        : definitions[0].key;
+
+    const selected =
+      definitions.find(function (item) {
+        return item.key === selectedKey;
+      }) || definitions[0];
+
+    const history =
+      Array.isArray(trainingHistory)
+        ? trainingHistory
+        : [];
+
+    const matching =
+      history
+        .filter(function (item) {
+          return (
+            standardizeKnowledgePoint(item.knowledge_point) === point &&
+            getTrainingEvidenceKey(item) === selected.key
+          );
+        })
+        .slice()
+        .sort(function (a, b) {
+          return (
+            new Date(a.created_at || 0) -
+            new Date(b.created_at || 0)
+          );
+        });
+
+    const sessionMap = {};
+
+    matching.forEach(function (item, index) {
+      const key =
+        item.training_session_id
+          ? String(item.training_session_id)
+          : "legacy:" +
+            normalizeTrainingQuestion(item.question || "") +
+            ":" + index;
+
+      if (!sessionMap[key]) {
+        sessionMap[key] = {
+          records: []
+        };
+      }
+
+      sessionMap[key].records.push(item);
+    });
+
+    const sessions =
+      Object.values(sessionMap)
+        .sort(function (a, b) {
+          const at =
+            new Date(
+              a.records[a.records.length - 1]?.created_at || 0
+            ).getTime();
+          const bt =
+            new Date(
+              b.records[b.records.length - 1]?.created_at || 0
+            ).getTime();
+          return at - bt;
+        })
+        .map(function (session) {
+          const records =
+            session.records
+              .slice()
+              .sort(function (a, b) {
+                return (
+                  new Date(a.created_at || 0) -
+                  new Date(b.created_at || 0)
+                );
+              });
+
+          const first =
+            records.find(function (item) {
+              return item.attempt_type === "guided_step";
+            }) || records[0] || null;
+
+          const prompted =
+            records.some(function (item) {
+              return (
+                item.step_mode === "simplified" ||
+                item.simplification_used === true
+              );
+            });
+
+          const passed =
+            records.some(function (item) {
+              return item.passed === true;
+            });
+
+          const difficulty =
+            records.find(function (item) {
+              return Number(item.difficulty) >= 1;
+            })?.difficulty;
+
+          return {
+            difficulty: Math.max(
+              1,
+              Math.min(
+                5,
+                Number(difficulty || 1)
+              )
+            ),
+            requiredSupport:
+              prompted ||
+              records.some(function (item) {
+                return (
+                  item.attempt_type === "guided_step" &&
+                  item.passed === false
+                );
+              }) ||
+              (
+                first?.attempt_type === "initial_answer" &&
+                first?.passed === false
+              ),
+            passed: passed
+          };
+        });
+
+    if (sessions.length === 0) {
+      return {
+        key: selected.key,
+        label: selected.label,
+        difficulty: 1,
+        difficultyLabel: "基础",
+        sessions: 0,
+        reason:
+          "这个微技能还没有训练证据，从难度1的基础题开始。"
+      };
+    }
+
+    const latest =
+      sessions[sessions.length - 1];
+
+    let difficulty =
+      latest.difficulty;
+
+    if (latest.requiredSupport) {
+      difficulty =
+        Math.max(1, difficulty - 1);
+
+      return {
+        key: selected.key,
+        label: selected.label,
+        difficulty: difficulty,
+        difficultyLabel:
+          difficulty === 1 ? "基础" :
+          difficulty === 2 ? "巩固" :
+          difficulty === 3 ? "进阶" :
+          difficulty === 4 ? "变式" : "迁移",
+        sessions: sessions.length,
+        reason:
+          "这个微技能最近出现错误或需要提示，下一轮降低1级。"
+      };
+    }
+
+    const recent =
+      sessions.slice(-2);
+
+    if (
+      recent.length === 2 &&
+      recent.every(function (session) {
+        return (
+          session.passed &&
+          !session.requiredSupport
+        );
+      })
+    ) {
+      difficulty =
+        Math.min(5, difficulty + 1);
+
+      return {
+        key: selected.key,
+        label: selected.label,
+        difficulty: difficulty,
+        difficultyLabel:
+          difficulty === 1 ? "基础" :
+          difficulty === 2 ? "巩固" :
+          difficulty === 3 ? "进阶" :
+          difficulty === 4 ? "变式" : "迁移",
+        sessions: sessions.length,
+        reason:
+          "这个微技能最近连续两轮形成独立正确证据，下一轮提高1级。"
+      };
+    }
+
+    return {
+      key: selected.key,
+      label: selected.label,
+      difficulty: difficulty,
+      difficultyLabel:
+        difficulty === 1 ? "基础" :
+        difficulty === 2 ? "巩固" :
+        difficulty === 3 ? "进阶" :
+        difficulty === 4 ? "变式" : "迁移",
+      sessions: sessions.length,
+      reason:
+        "这个微技能的证据还不足以升降难度，本轮保持当前难度。"
+    };
+  }
+
+  /*
    * V0.19 动态难度状态机
    * 难度由程序根据最近训练证据自动调整，AI 不直接决定难度。
    */
@@ -4456,7 +4698,16 @@ window.MathAILearningModel = {
     return null;
   }
 
-  function getTrainingSteps(point, focusTitle, training) {
+  function getTrainingSteps(point, focus, training) {
+    const focusTitle =
+      focus && focus.title
+        ? focus.title
+        : "基础巩固训练";
+
+    const evidenceKey =
+      focus && focus.evidenceKey
+        ? focus.evidenceKey
+        : null;
     if (point === "数与代数 / 倍数关系") {
       const question = String(training.question || "");
       const multipleMatch =
@@ -4506,6 +4757,49 @@ window.MathAILearningModel = {
 
       const sum =
         sumMatch ? Number(sumMatch[1]) : null;
+
+      if (
+        multiple !== null &&
+        sum !== null &&
+        evidenceKey === "total_parts"
+      ) {
+        return [
+          {
+            prompt:
+              "第1步：把两个数的份数合起来。较小数1份，较大数" +
+              multiple + "份，一共几份？",
+            accepted: [String(multiple + 1)]
+          },
+          {
+            prompt:
+              "第2步：用总和" + sum +
+              "除以总份数" + (multiple + 1) +
+              "，得到1份是多少？",
+            accepted: [
+              String(Number(training.correct_answer))
+            ]
+          }
+        ];
+      }
+
+      if (
+        multiple !== null &&
+        sum !== null &&
+        evidenceKey === "unit_value"
+      ) {
+        return [
+          {
+            prompt:
+              "第1步：这道题一共是" +
+              (multiple + 1) +
+              "份。先计算" + sum + "÷" +
+              (multiple + 1) + "。",
+            accepted: [
+              String(Number(training.correct_answer))
+            ]
+          }
+        ];
+      }
 
       if (
         multiple !== null &&
@@ -4775,11 +5069,39 @@ window.MathAILearningModel = {
         trainingHistory
       );
 
+    const defaultMicroSkill =
+      getDefaultTrainingMicroSkill(trainingPoint);
+
+    const effectiveFocus =
+      (
+        focus &&
+        focus.evidenceKey
+      )
+        ? focus
+        : (
+            defaultMicroSkill
+              ? {
+                  ...focus,
+                  evidenceKey: defaultMicroSkill.key,
+                  evidenceLabel: defaultMicroSkill.label,
+                  abilityState: defaultMicroSkill.state,
+                  abilityStateText: defaultMicroSkill.stateText
+                }
+              : focus
+          );
+
+    const microSkillPlan =
+      getMicroSkillTrainingPlan(
+        trainingPoint,
+        effectiveFocus,
+        trainingHistory
+      );
+
     const training = generateNonRepeatedTargetedTraining(
       trainingPoint,
-      focus,
+      effectiveFocus,
       sessionIndex || 1,
-      difficultyState.difficulty
+      microSkillPlan.difficulty
     );
 
     if (!training) {
@@ -4797,16 +5119,26 @@ window.MathAILearningModel = {
         plan.redirected,
       prerequisite_point:
         plan.prerequisitePoint || null,
-      focus: focus,
-      difficulty: difficultyState.difficulty,
-      difficulty_label: difficultyState.label,
-      difficulty_reason: difficultyState.reason,
+      focus: effectiveFocus,
+      micro_skill_key:
+        microSkillPlan.key,
+      micro_skill_label:
+        microSkillPlan.label,
+      difficulty: microSkillPlan.difficulty,
+      difficulty_label:
+        microSkillPlan.difficultyLabel,
+      difficulty_reason:
+        microSkillPlan.reason,
+      overall_difficulty:
+        difficultyState.difficulty,
+      overall_difficulty_label:
+        difficultyState.label,
       question: training.question,
       correct_answer: training.correct_answer,
       explanation: training.explanation || "",
       steps: getTrainingSteps(
         point,
-        focus.title,
+        effectiveFocus,
         training
       ),
       currentStep: 0,
@@ -4843,27 +5175,31 @@ window.MathAILearningModel = {
           ? " ｜ "
           : ""
       ) +
-      focus.title +
+      effectiveFocus.title +
       (
-        focus.evidenceLabel
-          ? " ｜ 重点：" + focus.evidenceLabel
+        microSkillPlan.label
+          ? " ｜ 微技能：" + microSkillPlan.label
           : ""
       ) +
       (
-        focus.abilityStateText
-          ? " ｜ 当前：" + focus.abilityStateText
+        effectiveFocus.abilityStateText
+          ? " ｜ 当前：" + effectiveFocus.abilityStateText
           : ""
       ) +
-      " ｜ " + focus.reason +
-      " ｜ 难度 " + activeTraining.difficulty + "/5（" +
+      " ｜ " + effectiveFocus.reason +
+      " ｜ 微技能难度 " + activeTraining.difficulty + "/5（" +
       activeTraining.difficulty_label + "）" +
       " ｜ 第" + activeTraining.sessionIndex + "道";
     trainingStatus.textContent =
       useMockAI
-        ? "测试题已生成。当前难度 " +
+        ? "测试题已生成。当前微技能“" +
+          activeTraining.micro_skill_label +
+          "”，难度 " +
           activeTraining.difficulty + "/5（" +
           activeTraining.difficulty_label + "）。"
-        : "题目已生成。当前难度 " +
+        : "题目已生成。当前微技能“" +
+          activeTraining.micro_skill_label +
+          "”，难度 " +
           activeTraining.difficulty + "/5（" +
           activeTraining.difficulty_label + "）。";
     trainingQuestion.textContent =
@@ -5264,12 +5600,24 @@ window.MathAILearningModel = {
         ),
       focus:
         activeTraining.focus.title,
+      micro_skill_key:
+        activeTraining.micro_skill_key,
+      micro_skill_label:
+        activeTraining.micro_skill_label,
+      micro_skill_key:
+        activeTraining.micro_skill_key,
+      micro_skill_label:
+        activeTraining.micro_skill_label,
       difficulty:
         activeTraining.difficulty,
       difficulty_label:
         activeTraining.difficulty_label,
       difficulty_reason:
         activeTraining.difficulty_reason,
+      overall_difficulty:
+        activeTraining.overall_difficulty,
+      overall_difficulty_label:
+        activeTraining.overall_difficulty_label,
       question:
         activeTraining.question,
       correct_answer:
