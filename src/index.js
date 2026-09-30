@@ -180,15 +180,100 @@ function standardizeKnowledgePoints(points) {
   return result;
 }
 
+const ERROR_TYPES = [
+  "计算错误",
+  "概念理解错误",
+  "审题错误",
+  "方法/步骤错误",
+  "抄写/书写错误",
+  "单位错误",
+  "粗心/注意力错误",
+  "无法判断",
+];
+
+const ERROR_NATURES = [
+  "偶然失误",
+  "知识理解不足",
+  "无法判断",
+];
+
+function standardizeErrorType(value) {
+  const text = String(value ?? "").trim();
+
+  if (!text) return "无法判断";
+
+  for (const type of ERROR_TYPES) {
+    if (text === type || text.includes(type)) {
+      return type;
+    }
+  }
+
+  if (text.includes("抄") || text.includes("书写")) {
+    return "抄写/书写错误";
+  }
+
+  if (text.includes("计算")) {
+    return "计算错误";
+  }
+
+  if (text.includes("概念")) {
+    return "概念理解错误";
+  }
+
+  if (text.includes("审题")) {
+    return "审题错误";
+  }
+
+  if (text.includes("步骤") || text.includes("方法")) {
+    return "方法/步骤错误";
+  }
+
+  if (text.includes("单位")) {
+    return "单位错误";
+  }
+
+  if (text.includes("粗心") || text.includes("注意")) {
+    return "粗心/注意力错误";
+  }
+
+  return "无法判断";
+}
+
+function standardizeErrorNature(value) {
+  const text = String(value ?? "").trim();
+
+  if (ERROR_NATURES.includes(text)) {
+    return text;
+  }
+
+  if (
+    text.includes("偶然") ||
+    text.includes("失误") ||
+    text.includes("粗心")
+  ) {
+    return "偶然失误";
+  }
+
+  if (
+    text.includes("知识") ||
+    text.includes("概念") ||
+    text.includes("没掌握") ||
+    text.includes("未掌握")
+  ) {
+    return "知识理解不足";
+  }
+
+  return "无法判断";
+}
+
 function normalizeResult(result) {
   return {
     question: String(result?.question ?? "").trim(),
     student_answer: String(result?.student_answer ?? "").trim(),
     correct_answer: String(result?.correct_answer ?? "").trim(),
     knowledge_points: standardizeKnowledgePoints(result?.knowledge_points),
-    error_type: Array.isArray(result?.error_type)
-      ? result.error_type.map(String).filter(Boolean).join("、").trim()
-      : String(result?.error_type ?? "").trim(),
+    error_type: standardizeErrorType(result?.error_type),
+    error_nature: standardizeErrorNature(result?.error_nature),
     analysis: String(result?.analysis ?? "").trim(),
     confidence:
       typeof result?.confidence === "number"
@@ -266,9 +351,25 @@ async function analyzeImage(request, env) {
 - 数与代数 / 运算律
 - 数与代数 / 比与比例
 - 统计与概率 / 统计
-5. 判断错误类型，例如“计算错误”“概念理解错误”“审题错误”“步骤错误”“答案抄写错误”“无法判断”等。
-6. 用适合家长阅读的中文简要说明为什么错、应该重点检查什么。
-7. 如果图片无法可靠识别，请把 unclear 设为 true，并在 analysis 中说明原因。
+5. 判断错误类型，只从下面类型中选择一个：
+- 计算错误
+- 概念理解错误
+- 审题错误
+- 方法/步骤错误
+- 抄写/书写错误
+- 单位错误
+- 粗心/注意力错误
+- 无法判断
+
+特别注意：如果孩子最终答案正确，但中间过程存在把数字写错、抄错、对齐时写错等问题，不要判为“审题错误”，优先判为“抄写/书写错误”。
+
+6. 判断这次错误更像哪一种性质，只从下面选择一个：
+- 偶然失误：知识和方法看起来已经会，只是一次性失误。
+- 知识理解不足：从错误表现看，存在知识、概念或方法没有真正掌握的迹象。
+- 无法判断：照片或证据不足，不能可靠区分。
+
+7. 用适合家长阅读的中文简要说明为什么错、应该重点检查什么，并明确说明你为什么判断为“偶然失误”或“知识理解不足”。
+8. 如果图片无法可靠识别，请把 unclear 设为 true，并在 analysis 中说明原因。
 
 请只返回一个合法 JSON 对象，不要 Markdown，不要解释 JSON 之外的内容。
 字段必须是：
@@ -325,8 +426,9 @@ confidence 为 0 到 1 之间的小数，表示你对整道题识别与分析的
                       items: { type: "string" },
                       description: "主要小学数学知识点"
                     },
-                    error_type: { type: "string", description: "错误类型" },
-                    analysis: { type: "string", description: "简明说明错误原因和应该检查什么" },
+                    error_type: { type: "string", description: "错误类型，只能从指定类型中选一个" },
+                    error_nature: { type: "string", description: "错误性质，只能是偶然失误、知识理解不足或无法判断" },
+                    analysis: { type: "string", description: "简明说明错误原因、应检查什么以及判断错误性质的依据" },
                     confidence: { type: "number", description: "0到1之间的识别与分析把握度" },
                     unclear: { type: "boolean", description: "图片是否存在影响可靠分析的模糊内容" }
                   },
@@ -336,6 +438,7 @@ confidence 为 0 到 1 之间的小数，表示你对整道题识别与分析的
                     "correct_answer",
                     "knowledge_points",
                     "error_type",
+                    "error_nature",
                     "analysis",
                     "confidence",
                     "unclear"
