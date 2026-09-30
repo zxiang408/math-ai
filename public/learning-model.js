@@ -395,6 +395,462 @@ export function summarizeUnifiedLearningModel(model) {
   };
 }
 
+
+function eventMatchesPoint(event, point) {
+  return normalizePoints(event?.knowledge_points).includes(point);
+}
+
+function eventPassed(event) {
+  return event?.outcome?.passed === true ||
+    event?.outcome?.correct === true;
+}
+
+function eventFailed(event) {
+  return event?.outcome?.passed === false ||
+    event?.outcome?.correct === false;
+}
+
+function sortedEvents(model) {
+  return (Array.isArray(model?.events) ? model.events : [])
+    .slice()
+    .sort(function (a, b) {
+      return (
+        new Date(a.occurred_at || 0).getTime() -
+        new Date(b.occurred_at || 0).getTime()
+      );
+    });
+}
+
+export function deriveKnowledgePointState(model, point) {
+  const events = sortedEvents(model);
+  const matchingMistakes = events.filter(function (event) {
+    return (
+      event.source === "mistake" &&
+      eventMatchesPoint(event, point)
+    );
+  });
+
+  const hasKnowledgeEvidence = matchingMistakes.some(function (event) {
+    return event.diagnosis?.error_nature === "知识理解不足";
+  });
+
+  const retests = events.filter(function (event) {
+    return (
+      event.source === "retest" &&
+      eventMatchesPoint(event, point)
+    );
+  });
+
+  const stats = {
+    attempts: retests.length,
+    passes: retests.filter(eventPassed).length,
+    failures: retests.filter(eventFailed).length,
+    consecutiveCorrect: 0,
+    lastAttempt:
+      retests.length > 0
+        ? retests[retests.length - 1]
+        : null,
+    history: retests
+  };
+
+  for (let i = retests.length - 1; i >= 0; i--) {
+    if (eventPassed(retests[i])) {
+      stats.consecutiveCorrect += 1;
+    } else {
+      break;
+    }
+  }
+
+  if (!hasKnowledgeEvidence) {
+    return {
+      state: "observed",
+      stateText: "待观察",
+      stats: stats
+    };
+  }
+
+  let state = "not_mastered";
+  let previousDate = null;
+
+  retests.forEach(function (attempt) {
+    const currentDate = new Date(attempt.occurred_at || 0);
+    const validCurrent = !Number.isNaN(currentDate.getTime());
+
+    const daysSincePrevious =
+      previousDate && validCurrent
+        ? (currentDate.getTime() - previousDate.getTime()) / 86400000
+        : null;
+
+    const isCorrect = eventPassed(attempt);
+    const isSpaced =
+      attempt.event_type === "spaced_retest_attempt" ||
+      (daysSincePrevious !== null && daysSincePrevious >= 3);
+
+    if (state === "not_mastered") {
+      state = isCorrect ? "learning" : "not_mastered";
+    } else if (state === "learning") {
+      state = isCorrect ? "initial_mastery" : "not_mastered";
+    } else if (state === "initial_mastery") {
+      state = isCorrect ? "initial_mastery" : "unstable";
+    } else if (state === "unstable") {
+      state = isCorrect ? "recovering" : "unstable";
+    } else if (state === "recovering") {
+      if (!isCorrect) {
+        state = "unstable";
+      } else if (isSpaced) {
+        state = "mastered";
+      } else {
+        state = "recovering";
+      }
+    } else if (state === "mastered") {
+      state = isCorrect ? "mastered" : "unstable";
+    }
+
+    if (validCurrent) {
+      previousDate = currentDate;
+    }
+  });
+
+  const stateTextMap = {
+    not_mastered: "未掌握",
+    learning: "学习中",
+    initial_mastery: "初步掌握",
+    unstable: "掌握不稳定",
+    recovering: "恢复中",
+    mastered: "已掌握",
+    observed: "待观察"
+  };
+
+  return {
+    state: state,
+    stateText:
+      stateTextMap[state] || "未掌握",
+    stats: stats
+  };
+}
+
+export function deriveMicroSkillState(model, point, skillKey) {
+  const events = sortedEvents(model).filter(function (event) {
+    return (
+      event.source === "training" &&
+      event.event_type === "training_attempt" &&
+      eventMatchesPoint(event, point) &&
+      event.micro_skill?.key === skillKey
+    );
+  });
+
+  const sessions = {};
+  events.forEach(function (event, index) {
+    const key =
+      event.context?.training_session_id
+        ? "session:" + event.context.training_session_id
+        : event.question
+          ? "question:" + event.question
+          : "record:" + index;
+
+    if (!sessions[key]) {
+      sessions[key] = {
+        key: key,
+        records: []
+      };
+    }
+
+    sessions[key].records.push(event);
+  });
+
+  const sessionList = Object.values(sessions)
+    .sort(function (a, b) {
+      const lastA =
+        new Date(
+          a.records[a.records.length - 1]?.occurred_at || 0
+        ).getTime();
+      const lastB =
+        new Date(
+          b.records[b.records.length - 1]?.occurred_at || 0
+        ).getTime();
+      return lastA - lastB;
+    })
+    .map(function (session) {
+      const records = session.records.slice().sort(function (a, b) {
+        const attemptA =
+          Number(a.context?.attempt_number || 1);
+        const attemptB =
+          Number(b.context?.attempt_number || 1);
+
+        if (attemptA !== attemptB) {
+          return attemptA - attemptB;
+        }
+
+        return (
+          new Date(a.occurred_at || 0).getTime() -
+          new Date(b.occurred_at || 0).getTime()
+        );
+      });
+
+      const first = records[0] || null;
+      const prompted = records.some(function (event) {
+        return event.outcome?.prompted === true;
+      });
+
+      const firstTryIndependent =
+        Boolean(
+          first &&
+          eventPassed(first) &&
+          Number(first.context?.attempt_number || 1) === 1 &&
+          !first.outcome?.prompted
+        );
+
+      const eventuallyPassed =
+        records.some(eventPassed);
+
+      return {
+        key: session.key,
+        firstTryIndependent: firstTryIndependent,
+        eventuallyPassed: eventuallyPassed,
+        prompted: prompted
+      };
+    });
+
+  const independentPasses =
+    sessionList.filter(function (session) {
+      return session.firstTryIndependent;
+    }).length;
+
+  const promptedSessions =
+    sessionList.filter(function (session) {
+      return session.prompted;
+    }).length;
+
+  const recent = sessionList.slice(-3);
+  const latest =
+    sessionList.length > 0
+      ? sessionList[sessionList.length - 1]
+      : null;
+
+  if (!latest) {
+    return {
+      state: "insufficient",
+      stateText: "证据不足",
+      sessions: 0,
+      independentPasses: 0,
+      promptedSessions: 0
+    };
+  }
+
+  const recentIndependent =
+    recent.length >= 3 &&
+    recent.every(function (session) {
+      return (
+        session.firstTryIndependent &&
+        !session.prompted
+      );
+    });
+
+  if (
+    latest.prompted &&
+    !latest.firstTryIndependent
+  ) {
+    return {
+      state: "prompted",
+      stateText: "仍需提示",
+      sessions: sessionList.length,
+      independentPasses: independentPasses,
+      promptedSessions: promptedSessions
+    };
+  }
+
+  if (recentIndependent) {
+    return {
+      state: "mastered",
+      stateText: "已掌握",
+      sessions: sessionList.length,
+      independentPasses: independentPasses,
+      promptedSessions: promptedSessions
+    };
+  }
+
+  return {
+    state: "forming",
+    stateText: "正在形成",
+    sessions: sessionList.length,
+    independentPasses: independentPasses,
+    promptedSessions: promptedSessions
+  };
+}
+
+export const DEFAULT_RETENTION_INTERVALS_DAYS = [
+  3,
+  7,
+  14,
+  30,
+  60,
+  90
+];
+
+export function deriveReviewSchedule(
+  model,
+  point,
+  knowledgeState,
+  intervals =
+    DEFAULT_RETENTION_INTERVALS_DAYS
+) {
+  const events = sortedEvents(model);
+  const matching = events.filter(function (event) {
+    return (
+      event.source === "retest" &&
+      eventMatchesPoint(event, point)
+    );
+  });
+
+  const spacedPassed = matching.filter(function (event) {
+    return (
+      event.event_type === "spaced_retest_attempt" &&
+      eventPassed(event)
+    );
+  });
+
+  const latestAttempt =
+    matching.length > 0
+      ? matching[matching.length - 1]
+      : null;
+
+  const latestSpacedPassed =
+    spacedPassed.length > 0
+      ? spacedPassed[spacedPassed.length - 1]
+      : null;
+
+  let dueAt = null;
+  let intervalDays = null;
+  let stage = 0;
+
+  if (latestSpacedPassed) {
+    stage = spacedPassed.length;
+    const nextIndex = Math.min(
+      stage,
+      intervals.length - 1
+    );
+
+    intervalDays = intervals[nextIndex];
+
+    dueAt = new Date(
+      new Date(latestSpacedPassed.occurred_at).getTime() +
+      intervalDays * 86400000
+    ).toISOString();
+  } else if (
+    knowledgeState?.state === "initial_mastery" &&
+    latestAttempt &&
+    eventPassed(latestAttempt)
+  ) {
+    stage = 0;
+    intervalDays = intervals[0];
+
+    dueAt = new Date(
+      new Date(latestAttempt.occurred_at).getTime() +
+      intervalDays * 86400000
+    ).toISOString();
+  }
+
+  const base = {
+    dueAt: dueAt,
+    intervalDays: intervalDays,
+    spacedPasses: spacedPassed.length,
+    spacedFailures: matching.filter(function (event) {
+      return (
+        event.event_type === "spaced_retest_attempt" &&
+        eventFailed(event)
+      );
+    }).length,
+    stage: stage
+  };
+
+  if (
+    knowledgeState?.state === "not_mastered" ||
+    knowledgeState?.state === "learning" ||
+    knowledgeState?.state === "unstable"
+  ) {
+    return {
+      ...base,
+      state: "building",
+      stateText: "尚未进入长期保持",
+      daysUntilDue: null
+    };
+  }
+
+  if (!dueAt) {
+    return {
+      ...base,
+      state: "building",
+      stateText: "尚未进入长期保持",
+      daysUntilDue: null
+    };
+  }
+
+  const daysUntilDue =
+    Math.ceil(
+      (new Date(dueAt).getTime() - Date.now()) /
+      86400000
+    );
+
+  if (
+    knowledgeState?.state === "recovering"
+  ) {
+    return {
+      ...base,
+      state: "recovering",
+      stateText: "恢复中",
+      daysUntilDue: daysUntilDue
+    };
+  }
+
+  if (daysUntilDue > 0) {
+    return {
+      ...base,
+      state: "retaining",
+      stateText: "保持中",
+      daysUntilDue: daysUntilDue
+    };
+  }
+
+  if (daysUntilDue >= -intervalDays) {
+    return {
+      ...base,
+      state: "due",
+      stateText: "到期复测",
+      daysUntilDue: daysUntilDue
+    };
+  }
+
+  return {
+    ...base,
+    state: "risk",
+    stateText: "遗忘风险",
+    daysUntilDue: daysUntilDue
+  };
+}
+
+export function deriveLearnerState(model, points) {
+  const pointList = Array.isArray(points)
+    ? points
+    : [];
+
+  return pointList.map(function (point) {
+    const state =
+      deriveKnowledgePointState(model, point);
+    const review =
+      deriveReviewSchedule(
+        model,
+        point,
+        state
+      );
+
+    return {
+      knowledge_point: point,
+      ability_state: state,
+      review_schedule: review
+    };
+  });
+}
+
 export function getLearningModelContract() {
   return {
     schema_version: LEARNING_MODEL_VERSION,
