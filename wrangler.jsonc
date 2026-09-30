@@ -6,6 +6,10 @@
   "observability": {
     "enabled": true
   },
+  "vars": {
+    "MATH_AI_LEARNER_ID": "local-default",
+    "SUPABASE_URL": "https://xntpbacnvnbzzvxezjol.supabase.co"
+  },
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",
