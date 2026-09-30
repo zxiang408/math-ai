@@ -396,6 +396,7 @@ async function requestStructuredJson(env, prompt, functionName, properties, requ
     }
 
     const message = body?.choices?.[0]?.message;
+
     const toolCall = Array.isArray(message?.tool_calls)
       ? message.tool_calls.find(
           (call) =>
@@ -404,27 +405,38 @@ async function requestStructuredJson(env, prompt, functionName, properties, requ
         )
       : null;
 
-    if (!toolCall?.function?.arguments) {
-      return {
-        ok: false,
-        status: 502,
-        data: {
-          error: "AI 没有返回可用的结构化结果。",
-          raw_preview: contentToText(message?.content).slice(0, 1000),
-        },
-      };
+    let parsed = null;
+
+    // Preferred path: the model used the requested function/tool call.
+    if (toolCall?.function?.arguments) {
+      try {
+        parsed = JSON.parse(
+          toolCall.function.arguments
+        );
+      } catch (_) {
+        parsed = extractJson(
+          toolCall.function.arguments
+        );
+      }
     }
 
-    let parsed;
-    try {
-      parsed = JSON.parse(toolCall.function.arguments);
-    } catch (_) {
+    // Compatibility path: some free models return the same JSON
+    // directly in message.content instead of using the tool call.
+    if (!parsed) {
+      parsed = extractJson(message?.content);
+    }
+
+    if (!parsed) {
       return {
         ok: false,
         status: 502,
         data: {
-          error: "AI 返回的结构化结果不是有效 JSON。",
-          raw_preview: String(toolCall.function.arguments).slice(0, 1000),
+          error: "AI 返回了内容，但无法解析为有效的结构化 JSON。",
+          raw_preview:
+            contentToText(
+              toolCall?.function?.arguments ||
+              message?.content
+            ).slice(0, 1200),
         },
       };
     }
