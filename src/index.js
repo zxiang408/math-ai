@@ -110,7 +110,9 @@ function normalizeResult(result) {
     knowledge_points: Array.isArray(result?.knowledge_points)
       ? result.knowledge_points.map(String).filter(Boolean).slice(0, 8)
       : [],
-    error_type: String(result?.error_type ?? "").trim(),
+    error_type: Array.isArray(result?.error_type)
+      ? result.error_type.map(String).filter(Boolean).join("、").trim()
+      : String(result?.error_type ?? "").trim(),
     analysis: String(result?.analysis ?? "").trim(),
     confidence:
       typeof result?.confidence === "number"
@@ -213,7 +215,7 @@ confidence 为 0 到 1 之间的小数，表示你对整道题识别与分析的
         body: JSON.stringify({
           model: "qwen/qwen3.8-27b:free",
           temperature: 0.2,
-          max_tokens: 800,
+          max_tokens: 1800,
           reasoning: { enabled: false },
           tools: [
             {
@@ -356,10 +358,14 @@ confidence 为 0 到 1 之间的小数，表示你对整道题识别与分析的
   const parsed = extractJson(content);
 
   if (!parsed) {
+    const raw = contentToText(content);
+
     return jsonResponse(
       {
         error: "AI 没有返回可用的结构化分析结果。",
-        raw_preview: contentToText(content).slice(0, 800),
+        finish_reason: upstreamBody?.choices?.[0]?.finish_reason ?? null,
+        raw_length: raw.length,
+        raw_preview: raw.slice(0, 1200),
       },
       502,
       request,
