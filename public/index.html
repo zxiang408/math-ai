@@ -757,7 +757,7 @@
       <br>
       已接入 OpenRouter 免费模型路由，用于错题照片识别与 AI 分析。
       <br>
-      当前已支持基础错题库、知识点标准化统计、能力档案、复测、针对性训练、分步骤互动辅导，以及长期保持模型；V0.11 已建立知识结构图；V0.12 开始让前置知识证据参与训练路径决策。
+      当前已支持基础错题库、知识点标准化统计、能力档案、复测、针对性训练、分步骤互动辅导，以及长期保持模型；V0.11 建立知识结构图；V0.12 让前置知识证据参与训练路径；V0.13 开始进行全局训练调度。
 
     </div>
 
@@ -769,6 +769,16 @@
     <h2>🧒 孩子数学能力档案</h2>
     <div class="subtitle">
       根据错题与复测历史自动形成：未掌握 → 学习中 → 初步掌握 → 掌握不稳定 → 恢复中 → 已掌握。
+    </div>
+
+    <div class="knowledge-graph-summary" id="smartTrainingRecommendation">
+      系统会根据知识状态、子能力训练证据和知识结构，自动安排当前最需要训练的环节。
+    </div>
+
+    <div class="button-row">
+      <button class="primary" id="smartTrainingButton">
+        🧠 智能安排训练
+      </button>
     </div>
 
     <div id="abilityList"></div>
@@ -948,6 +958,12 @@
 
   const abilityList =
     document.getElementById("abilityList");
+
+  const smartTrainingRecommendation =
+    document.getElementById("smartTrainingRecommendation");
+
+  const smartTrainingButton =
+    document.getElementById("smartTrainingButton");
 
   const knowledgeGraphSummary =
     document.getElementById("knowledgeGraphSummary");
@@ -4484,6 +4500,35 @@
     }, 150);
   }
 
+  smartTrainingButton.addEventListener(
+    "click",
+    function () {
+      const history = loadHistory();
+      const recommendation =
+        getSmartTrainingRecommendation(history);
+
+      if (!recommendation) {
+        smartTrainingRecommendation.textContent =
+          "目前还没有可用于智能训练调度的已接入知识点证据。";
+        return;
+      }
+
+      const stats =
+        getKnowledgeState(
+          recommendation.point,
+          history,
+          loadRetestHistory()
+        );
+
+      showTrainingPanel(
+        recommendation.point,
+        history,
+        stats,
+        1
+      );
+    }
+  );
+
   submitTrainingButton.addEventListener(
     "click",
     submitTraining
@@ -5382,7 +5427,214 @@
     return wrapper;
   }
 
+  /*
+   * V0.13 全局训练调度器
+   *
+   * 不改变任何历史数据，只从现有错题、复测和训练证据中计算
+   * “当前最需要训练”的知识点 / 微技能。
+   */
+  function getSmartTrainingRecommendation(history) {
+    const supported =
+      getSupportedTrainingPoints();
+
+    const retestHistory =
+      loadRetestHistory();
+
+    const trainingHistory =
+      loadTrainingHistory();
+
+    const candidates = [];
+
+    supported.forEach(function (point) {
+      const matching =
+        history.filter(function (item) {
+          return standardizeKnowledgePoints(
+            item.knowledge_points
+          ).includes(point);
+        });
+
+      if (matching.length === 0) {
+        return;
+      }
+
+      const knowledgeState =
+        getKnowledgeState(
+          point,
+          history,
+          retestHistory
+        );
+
+      const trainingFocus =
+        getTrainingAbilityFocus(
+          point,
+          trainingHistory
+        );
+
+      const evidenceFocus =
+        getTrainingEvidenceFocus(point);
+
+      let score = 0;
+
+      const stateScore = {
+        not_mastered: 1000,
+        unstable: 900,
+        learning: 800,
+        recovering: 700,
+        initial_mastery: 100,
+        mastered: 0,
+        observed: 0
+      };
+
+      score +=
+        stateScore[knowledgeState.state] || 0;
+
+      const latestMistake =
+        matching
+          .slice()
+          .sort(function (a, b) {
+            return new Date(b.created_at || 0) -
+              new Date(a.created_at || 0);
+          })[0] || null;
+
+      const latestErrorNature =
+        latestMistake
+          ? standardizeErrorNature(
+              latestMistake.error_nature,
+              latestMistake.error_type
+            )
+          : "无法判断";
+
+      if (latestErrorNature === "知识理解不足") {
+        score += 100;
+      }
+
+      if (trainingFocus) {
+        if (trainingFocus.state === "prompted") {
+          score += 500;
+        } else if (trainingFocus.state === "forming") {
+          score += 300;
+        }
+
+        score +=
+          Math.max(
+            0,
+            200 -
+            trainingFocus.independentPasses * 25
+          );
+      } else if (evidenceFocus) {
+        score +=
+          evidenceFocus.failures * 60;
+
+        score +=
+          evidenceFocus.simplified * 120;
+      } else {
+        score += 80;
+      }
+
+      if (
+        knowledgeState.stats &&
+        knowledgeState.stats.failures > 0
+      ) {
+        score +=
+          Math.min(
+            150,
+            knowledgeState.stats.failures * 30
+          );
+      }
+
+      const plan =
+        resolveTrainingTarget(
+          point,
+          history
+        );
+
+      candidates.push({
+        point: point,
+        score: score,
+        state: knowledgeState.state,
+        stateText: knowledgeState.stateText,
+        abilityFocus: trainingFocus,
+        evidenceFocus: evidenceFocus,
+        plan: plan
+      });
+    });
+
+    candidates.sort(function (a, b) {
+      if (a.score !== b.score) {
+        return b.score - a.score;
+      }
+
+      if (
+        Boolean(a.abilityFocus) !==
+        Boolean(b.abilityFocus)
+      ) {
+        return a.abilityFocus ? -1 : 1;
+      }
+
+      return a.point.localeCompare(
+        b.point,
+        "zh-CN"
+      );
+    });
+
+    return candidates.length > 0
+      ? candidates[0]
+      : null;
+  }
+
+  function renderSmartTrainingRecommendation(history) {
+    if (
+      !smartTrainingRecommendation ||
+      !smartTrainingButton
+    ) {
+      return;
+    }
+
+    const recommendation =
+      getSmartTrainingRecommendation(history);
+
+    if (!recommendation) {
+      smartTrainingRecommendation.textContent =
+        "目前还没有可用于智能训练调度的已接入知识点证据。";
+      smartTrainingButton.disabled = true;
+      return;
+    }
+
+    const focus =
+      recommendation.abilityFocus ||
+      recommendation.evidenceFocus;
+
+    let text =
+      "当前训练优先目标：" +
+      recommendation.point +
+      " ｜ " +
+      recommendation.stateText;
+
+    if (focus && focus.label) {
+      text +=
+        " ｜ 微技能：" +
+        focus.label;
+    }
+
+    if (
+      recommendation.plan &&
+      recommendation.plan.redirected
+    ) {
+      text +=
+        " ｜ 路径判断：先检查前置知识“" +
+        recommendation.plan.prerequisiteLabel +
+        "”";
+    }
+
+    smartTrainingRecommendation.textContent =
+      text;
+
+    smartTrainingButton.disabled = false;
+  }
+
   function renderAbilityProfile(history) {
+    renderSmartTrainingRecommendation(history);
+
     const statsMap = {};
     const retestHistory = loadRetestHistory();
     const trainingHistory = loadTrainingHistory();
