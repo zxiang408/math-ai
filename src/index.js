@@ -211,7 +211,7 @@ confidence 为 0 到 1 之间的小数，表示你对整道题识别与分析的
           "X-Title": "小学数学 AI",
         },
         body: JSON.stringify({
-          model: "mistralai/mistral-small-3.2-24b-instruct:free",
+          model: "qwen/qwen3.8-27b:free",
           temperature: 0.2,
           max_tokens: 800,
           messages: [
