@@ -206,7 +206,7 @@ try {
     try {
       const items = JSON.parse(raw);
       return Array.isArray(items) && items.length >= 3 &&
-        items[items.length - 1].test_type === "spaced_retest";
+        items[0].test_type === "spaced_retest";
     } catch (_) {
       return false;
     }
@@ -216,7 +216,7 @@ try {
     const items = JSON.parse(
       localStorage.getItem("math-ai-v0.4-retest-history") || "[]"
     );
-    return items[items.length - 1]?.test_type;
+    return items[0]?.test_type;
   });
   assert.equal(localClassification, "spaced_retest");
 
