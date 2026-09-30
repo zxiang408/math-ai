@@ -1,4 +1,4 @@
-const APP_VERSION = "V0.4.2";
+const APP_VERSION = "V0.4.3";
 
 const JSON_HEADERS = {
   "Content-Type": "application/json; charset=UTF-8",
@@ -332,14 +332,19 @@ async function requestStructuredJson(env, prompt, functionName, properties, requ
           "X-Title": "小学数学 AI",
         },
         body: JSON.stringify({
-          // Retest structured endpoints use a non-reasoning model to avoid
-          // upstream errors when a fallback reasoning model is selected.
+          // Prefer Qwen free, then allow OpenRouter's free-model router
+          // to select another compatible free model if the preferred route
+          // is temporarily unavailable.
           models: [
             "qwen/qwen3.8-27b:free",
+            "openrouter/free",
           ],
+          provider: {
+            require_parameters: true,
+            allow_fallbacks: true,
+          },
           temperature: 0.2,
           max_tokens: 1200,
-          reasoning: { enabled: false },
           tools: [
             {
               type: "function",
