@@ -236,8 +236,72 @@ try {
   });
 
   await page.reload({ waitUntil: "domcontentloaded" });
-  await page.waitForFunction(
-    () => document.getElementById("retentionQueueSummary")?.textContent?.includes("需要保持复习")
+
+  await page.waitForTimeout(250);
+
+  const queueDiag = await page.evaluate(() => {
+    const modelApi = window.MathAILearningModel;
+    const rawHistory = localStorage.getItem("math-ai-v0.2-mistake-history");
+    const rawRetests = localStorage.getItem("math-ai-v0.4-retest-history");
+    let direct = null;
+    let error = null;
+
+    try {
+      const mistakes = JSON.parse(rawHistory || "[]");
+      const retests = JSON.parse(rawRetests || "[]");
+      const model = modelApi.buildUnifiedLearningModel(
+        { mistakes, retests, training: [] },
+        (v) => String(v || "").trim()
+      );
+      const state = modelApi.deriveKnowledgePointState(
+        model,
+        "数与代数 / 倍数关系"
+      );
+      direct = {
+        state: state.state,
+        schedule: modelApi.deriveReviewSchedule(
+          model,
+          "数与代数 / 倍数关系",
+          state
+        ),
+        queue: modelApi.buildRetentionQueue(
+          model,
+          ["数与代数 / 倍数关系"],
+          Date.now(),
+          modelApi.DEFAULT_RETENTION_INTERVALS_DAYS
+        )
+      };
+    } catch (e) {
+      error = String(e && e.stack ? e.stack : e);
+    }
+
+    return {
+      hasApi: Boolean(modelApi),
+      hasQueue: typeof modelApi?.buildRetentionQueue === "function",
+      summary: document.getElementById("retentionQueueSummary")?.textContent || null,
+      itemCount: document.querySelectorAll("#retentionQueueList .retention-queue-item").length,
+      direct,
+      error
+    };
+  });
+
+  console.log("V0.22 queue diagnostic:", JSON.stringify(queueDiag));
+
+  assert.equal(
+    queueDiag.error,
+    null,
+    "保持复习队列运行时异常: " + JSON.stringify(queueDiag)
+  );
+
+  assert.ok(
+    Array.isArray(queueDiag.direct?.queue) && queueDiag.direct.queue.length === 1,
+    "保持复习算法未生成1项到期队列: " + JSON.stringify(queueDiag)
+  );
+
+  assert.match(
+    queueDiag.summary || "",
+    /需要保持复习/,
+    "页面没有渲染到期复习提示: " + JSON.stringify(queueDiag)
   );
 
   const queueText = await page.locator("#retentionQueueSummary").textContent();
