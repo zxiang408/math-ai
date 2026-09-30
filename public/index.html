@@ -284,6 +284,51 @@
       font-size: 13px;
     }
 
+    .training-evidence {
+      margin-top: 12px;
+      padding: 12px;
+      border-radius: 10px;
+      background: #f8fafc;
+      border: 1px solid #e5e7eb;
+    }
+
+    .training-evidence-title {
+      font-weight: bold;
+      line-height: 1.5;
+    }
+
+    .training-evidence-note {
+      margin-top: 4px;
+      color: #667085;
+      font-size: 12px;
+      line-height: 1.6;
+    }
+
+    .training-evidence-row {
+      margin-top: 9px;
+      padding-top: 9px;
+      border-top: 1px solid #eaecf0;
+    }
+
+    .training-evidence-label {
+      font-weight: 600;
+      line-height: 1.5;
+    }
+
+    .training-evidence-detail {
+      margin-top: 3px;
+      color: #475467;
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    .training-evidence-state {
+      margin-top: 3px;
+      color: #344054;
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
     .history-empty {
       color: #667085;
       padding: 10px 0;
@@ -520,7 +565,7 @@
 
     <div class="notice">
 
-      当前是 V0.7.0。
+      当前是 V0.8.0。
       <br>
       已接入 OpenRouter 免费模型路由，用于错题照片识别与 AI 分析。
       <br>
@@ -656,9 +701,9 @@
   </div>
 
   <div class="footer">
-    小学数学 AI · V0.7.0
+    小学数学 AI · V0.8.0
     <br>
-    <span id="appVersion">程序版本：V0.7.0</span>
+    <span id="appVersion">程序版本：V0.8.0</span>
   </div>
 
 </div>
@@ -1721,6 +1766,7 @@
       currentStep: 0,
       attemptCount: 0,
       stepWrongCounts: {},
+      stepAttemptCounts: {},
       stepMode: "normal",
       sessionIndex: Math.max(1, Number(sessionIndex || 1))
     };
@@ -2095,6 +2141,37 @@
     }
   }
 
+  function recordTrainingCompletion() {
+    if (!activeTraining || activeTraining.completedRecorded) {
+      return;
+    }
+
+    activeTraining.completedRecorded = true;
+
+    saveTrainingAttempt({
+      id:
+        String(Date.now()) +
+        "-" +
+        Math.random().toString(36).slice(2, 8),
+      created_at:
+        new Date().toISOString(),
+      knowledge_point:
+        activeTraining.knowledge_point,
+      focus:
+        activeTraining.focus.title,
+      question:
+        activeTraining.question,
+      correct_answer:
+        activeTraining.correct_answer,
+      passed:
+        true,
+      attempt_type:
+        "training_completed",
+      session_index:
+        activeTraining.sessionIndex
+    });
+  }
+
   function submitTraining() {
     if (!activeTraining) return;
 
@@ -2146,7 +2223,13 @@
       attempt_number:
         activeTraining.attemptCount,
       attempt_type:
-        "initial_answer"
+        "initial_answer",
+      evidence_key:
+        "overall_independent_answer",
+      evidence_label:
+        "整体独立作答",
+      session_index:
+        activeTraining.sessionIndex
     });
 
     trainingResult.style.display = "block";
@@ -2165,6 +2248,7 @@
       trainingStepResult.style.display = "none";
       trainingAnswer.disabled = true;
       submitTrainingButton.disabled = true;
+      recordTrainingCompletion();
       nextTrainingButton.style.display = "inline-block";
       return;
     }
@@ -2486,6 +2570,8 @@
     trainingStatus.textContent =
       "本次训练已完成；训练结果不会直接改变能力状态。";
 
+    recordTrainingCompletion();
+
     nextTrainingButton.style.display = "inline-block";
   }
 
@@ -2524,6 +2610,15 @@
         step
       );
 
+    activeTraining.stepAttemptCounts[index] =
+      (activeTraining.stepAttemptCounts[index] || 0) + 1;
+
+    const evidenceMeta =
+      getTrainingEvidenceMeta(
+        activeTraining.knowledge_point,
+        index
+      );
+
     saveTrainingAttempt({
       id:
         String(Date.now()) +
@@ -2544,7 +2639,19 @@
       attempt_type:
         "guided_step",
       step_number:
-        index + 1
+        index + 1,
+      step_attempt_number:
+        activeTraining.stepAttemptCounts[index],
+      evidence_key:
+        evidenceMeta.key,
+      evidence_label:
+        evidenceMeta.label,
+      step_mode:
+        activeTraining.stepMode,
+      simplification_used:
+        activeTraining.stepMode === "simplified",
+      session_index:
+        activeTraining.sessionIndex
     });
 
     if (!passed) {
@@ -2576,6 +2683,11 @@
           );
 
         if (simplified) {
+          activeTraining.currentDisplayedStep =
+            simplified;
+          activeTraining.stepMode =
+            "simplified";
+
           trainingHintText.textContent =
             simplified.prompt;
           trainingStatus.textContent =
@@ -2899,9 +3011,258 @@
     return stats.stateText || "未掌握";
   }
 
+  function getTrainingEvidenceMeta(point, stepIndex) {
+    const index = Number(stepIndex || 0);
+
+    if (point === "数与代数 / 倍数关系") {
+      const metas = [
+        { key: "large_number_parts", label: "倍数 → 份数" },
+        { key: "total_parts", label: "总份数" },
+        { key: "unit_value", label: "总和 ÷ 总份数" }
+      ];
+      return metas[index] || {
+        key: "step_" + (index + 1),
+        label: "第" + (index + 1) + "步"
+      };
+    }
+
+    if (point === "图形与几何 / 正方形面积") {
+      const metas = [
+        { key: "side_scale", label: "边长变化倍数" },
+        { key: "area_scale_or_calculation", label: "面积变化 / 计算" }
+      ];
+      return metas[index] || {
+        key: "step_" + (index + 1),
+        label: "第" + (index + 1) + "步"
+      };
+    }
+
+    if (point === "数与代数 / 积的变化规律") {
+      const metas = [
+        { key: "unchanged_factor", label: "识别不变因数" },
+        { key: "combined_factor_change", label: "合并两个因数的变化" }
+      ];
+      return metas[index] || {
+        key: "step_" + (index + 1),
+        label: "第" + (index + 1) + "步"
+      };
+    }
+
+    if (point === "数与代数 / 四则运算") {
+      const metas = [
+        { key: "multiplication_first", label: "先算乘法" },
+        { key: "subtraction_after_multiplication", label: "再算减法" }
+      ];
+      return metas[index] || {
+        key: "step_" + (index + 1),
+        label: "第" + (index + 1) + "步"
+      };
+    }
+
+    if (point === "数与代数 / 小数") {
+      const metas = [
+        { key: "decimal_alignment", label: "小数点对齐" },
+        { key: "decimal_calculation", label: "小数计算" }
+      ];
+      return metas[index] || {
+        key: "step_" + (index + 1),
+        label: "第" + (index + 1) + "步"
+      };
+    }
+
+    return {
+      key: "step_" + (index + 1),
+      label: "第" + (index + 1) + "步"
+    };
+  }
+
+  function getTrainingEvidenceKey(attempt) {
+    if (attempt && attempt.evidence_key) {
+      return String(attempt.evidence_key);
+    }
+
+    if (attempt && attempt.attempt_type === "initial_answer") {
+      return "overall_independent_answer";
+    }
+
+    const point = String(attempt && attempt.knowledge_point || "");
+    const meta = getTrainingEvidenceMeta(
+      point,
+      Math.max(0, Number(attempt && attempt.step_number || 1) - 1)
+    );
+    return meta.key;
+  }
+
+  function getTrainingEvidenceLabel(point, attempt) {
+    if (attempt && attempt.evidence_label) {
+      return String(attempt.evidence_label);
+    }
+
+    if (attempt && attempt.attempt_type === "initial_answer") {
+      return "整体独立作答";
+    }
+
+    const meta = getTrainingEvidenceMeta(
+      point,
+      Math.max(0, Number(attempt && attempt.step_number || 1) - 1)
+    );
+    return meta.label;
+  }
+
+  function renderTrainingEvidence(point, trainingHistory) {
+    const wrapper = document.createElement("div");
+    wrapper.className = "training-evidence";
+
+    const title = document.createElement("div");
+    title.className = "training-evidence-title";
+    title.textContent = "🔎 学习证据";
+
+    const note = document.createElement("div");
+    note.className = "training-evidence-note";
+    note.textContent =
+      "来自训练过程中的实际作答；这里只记录证据，不直接改变“未掌握/已掌握”等能力状态。";
+
+    wrapper.appendChild(title);
+    wrapper.appendChild(note);
+
+    const matching = (Array.isArray(trainingHistory) ? trainingHistory : [])
+      .filter(function (item) {
+        return standardizeKnowledgePoint(item.knowledge_point) === point;
+      });
+
+    if (matching.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "training-evidence-detail";
+      empty.textContent = "还没有针对这个知识点的训练记录。";
+      wrapper.appendChild(empty);
+      return wrapper;
+    }
+
+    const groups = {};
+
+    matching.forEach(function (item) {
+      const key = getTrainingEvidenceKey(item);
+      const label = getTrainingEvidenceLabel(point, item);
+
+      if (!groups[key]) {
+        groups[key] = {
+          key: key,
+          label: label,
+          attempts: 0,
+          passes: 0,
+          failures: 0,
+          simplified: 0,
+          firstTryPasses: 0
+        };
+      }
+
+      const group = groups[key];
+      const passed = item.passed === true;
+
+      group.attempts += 1;
+
+      if (passed) {
+        group.passes += 1;
+      } else {
+        group.failures += 1;
+      }
+
+      if (
+        item.step_mode === "simplified" ||
+        item.simplification_used === true
+      ) {
+        group.simplified += 1;
+      }
+
+      if (
+        Number(item.step_attempt_number || 0) === 1 &&
+        passed
+      ) {
+        group.firstTryPasses += 1;
+      }
+    });
+
+    const preferredOrder = [
+      "large_number_parts",
+      "total_parts",
+      "unit_value",
+      "side_scale",
+      "area_scale_or_calculation",
+      "unchanged_factor",
+      "combined_factor_change",
+      "multiplication_first",
+      "subtraction_after_multiplication",
+      "decimal_alignment",
+      "decimal_calculation",
+      "overall_independent_answer"
+    ];
+
+    const entries = Object.values(groups).sort(function (a, b) {
+      const ia = preferredOrder.indexOf(a.key);
+      const ib = preferredOrder.indexOf(b.key);
+
+      if (ia >= 0 && ib >= 0 && ia !== ib) return ia - ib;
+      if (ia >= 0) return -1;
+      if (ib >= 0) return 1;
+      return a.label.localeCompare(b.label, "zh-CN");
+    });
+
+    entries.forEach(function (group) {
+      const row = document.createElement("div");
+      row.className = "training-evidence-row";
+
+      const label = document.createElement("div");
+      label.className = "training-evidence-label";
+      label.textContent = group.label;
+
+      const detail = document.createElement("div");
+      detail.className = "training-evidence-detail";
+
+      let detailText =
+        "尝试 " + group.attempts + " 次" +
+        " ｜ 答对 " + group.passes + " 次";
+
+      if (group.failures > 0) {
+        detailText += " ｜ 答错 " + group.failures + " 次";
+      }
+
+      if (group.simplified > 0) {
+        detailText += " ｜ 拆小 " + group.simplified + " 次";
+      }
+
+      if (group.firstTryPasses > 0) {
+        detailText += " ｜ 首次答对 " + group.firstTryPasses + " 次";
+      }
+
+      detail.textContent = detailText;
+
+      const state = document.createElement("div");
+      state.className = "training-evidence-state";
+
+      if (group.simplified > 0) {
+        state.textContent =
+          "证据提示：这一环节曾需要进一步拆小，仍值得继续观察。";
+      } else if (group.failures > 0) {
+        state.textContent =
+          "证据提示：这一环节已经出现正确作答，但稳定性还需要更多练习。";
+      } else {
+        state.textContent =
+          "证据提示：目前记录中这一环节均已正确完成。";
+      }
+
+      row.appendChild(label);
+      row.appendChild(detail);
+      row.appendChild(state);
+      wrapper.appendChild(row);
+    });
+
+    return wrapper;
+  }
+
   function renderAbilityProfile(history) {
     const statsMap = {};
     const retestHistory = loadRetestHistory();
+    const trainingHistory = loadTrainingHistory();
 
     history.forEach(function (item) {
       const points = standardizeKnowledgePoints(
@@ -3062,6 +3423,13 @@
       item.appendChild(name);
       item.appendChild(detail);
       item.appendChild(action);
+
+      item.appendChild(
+        renderTrainingEvidence(
+          point,
+          trainingHistory
+        )
+      );
 
       const shouldShowTrainingButton =
         stats.state === "not_mastered" ||
