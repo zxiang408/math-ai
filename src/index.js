@@ -1,4 +1,9 @@
-const APP_VERSION = "V0.15.3";
+import {
+  verifyMathAnswer,
+  extractSingleNumericValue
+} from "../public/math-engine.js";
+
+const APP_VERSION = "V0.16.0";
 
 const JSON_HEADERS = {
   "Content-Type": "application/json; charset=UTF-8",
@@ -294,46 +299,16 @@ function standardizeErrorNature(value, errorType) {
 }
 
 function extractLastNumericValue(value) {
-  const text = String(value ?? "")
-    .replace(/，/g, ",")
-    .trim();
-
-  if (!text) return null;
-
-  // For a simple final answer such as "64" / "64平方厘米" / "6.5米",
-  // use the last number as the final numeric result.
-  const matches = text.match(/-?(?:\\d+(?:\\.\\d+)?|\\.\\d+)/g);
-  if (!matches || matches.length !== 1) {
-    return null;
-  }
-
-  const number = Number(matches[0]);
-  return Number.isFinite(number) ? number : null;
+  return extractSingleNumericValue(value);
 }
 
 function compareSimpleRetestAnswers(studentAnswer, correctAnswer) {
-  const studentText = String(studentAnswer ?? "")
-    .trim()
-    .replace(/\\s+/g, "");
+  const verdict = verifyMathAnswer(
+    studentAnswer,
+    correctAnswer
+  );
 
-  const correctText = String(correctAnswer ?? "")
-    .trim()
-    .replace(/\\s+/g, "");
-
-  if (!studentText || !correctText) return null;
-
-  if (studentText === correctText) {
-    return true;
-  }
-
-  const studentNumber = extractLastNumericValue(studentText);
-  const correctNumber = extractLastNumericValue(correctText);
-
-  if (studentNumber === null || correctNumber === null) {
-    return null;
-  }
-
-  return Math.abs(studentNumber - correctNumber) < 1e-10;
+  return verdict.correct;
 }
 
 function normalizeResult(result) {
