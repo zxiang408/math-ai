@@ -565,7 +565,7 @@
 
     <div class="notice">
 
-      当前是 V0.9.0。
+      当前是 V0.9.1。
       <br>
       已接入 OpenRouter 免费模型路由，用于错题照片识别与 AI 分析。
       <br>
@@ -701,9 +701,9 @@
   </div>
 
   <div class="footer">
-    小学数学 AI · V0.9.0
+    小学数学 AI · V0.9.1
     <br>
-    <span id="appVersion">程序版本：V0.9.0</span>
+    <span id="appVersion">程序版本：V0.9.1</span>
   </div>
 
 </div>
@@ -1570,7 +1570,7 @@
     const round =
       Math.max(1, Number(sessionIndex || 1));
 
-    // 从 V0.9.0 开始，训练题不仅看错误类型，
+    // 从 V0.9.1 开始，训练题不仅看错误类型，
     // 还优先看训练过程中暴露的具体学习证据。
     const evidenceKey =
       focus && focus.evidenceKey
@@ -1826,14 +1826,24 @@
       }
 
       const correct = String(training.correct_answer || "");
+      const normalStep2Accepted =
+        multiple !== null
+          ? [String(multiple + 1)]
+          : [];
+
       return [
         {
           prompt: "第1步：先找出两个数之间的倍数关系，填写较大的数相当于几份？",
           accepted: [String(multiple || "").trim()]
         },
         {
-          prompt: "第2步：根据题目的和或差，先算出总共需要几份。",
-          accepted: []
+          prompt:
+            sum !== null && multiple !== null
+              ? "第2步：较小数是1份，较大数是" +
+                multiple +
+                "份。两个数合起来一共有几份？"
+              : "第2步：根据题目的和或差，先算出总共需要几份。",
+          accepted: normalStep2Accepted
         },
         {
           prompt: "第3步：算出题目要求的那个数。",
