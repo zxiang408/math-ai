@@ -311,6 +311,410 @@ function normalizeResult(result) {
   };
 }
 
+async function requestStructuredJson(env, prompt, functionName, properties, required) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 30000);
+
+  try {
+    const response = await fetch(
+      "https://openrouter.ai/api/v1/chat/completions",
+      {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${env.OPENROUTER_API_KEY}`,
+          "Content-Type": "application/json",
+          "HTTP-Referer": "https://math-ai.zxiang88688.workers.dev",
+          "X-Title": "小学数学 AI",
+        },
+        body: JSON.stringify({
+          models: [
+            "qwen/qwen3.8-27b:free",
+            "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+            "openrouter/free",
+          ],
+          temperature: 0.2,
+          max_tokens: 1200,
+          reasoning: { enabled: false },
+          tools: [
+            {
+              type: "function",
+              function: {
+                name: functionName,
+                description: "Return the requested structured result.",
+                parameters: {
+                  type: "object",
+                  properties,
+                  required,
+                },
+              },
+            },
+          ],
+          tool_choice: {
+            type: "function",
+            function: { name: functionName },
+          },
+          messages: [
+            {
+              role: "user",
+              content: prompt,
+            },
+          ],
+        }),
+        signal: controller.signal,
+      },
+    );
+
+    let body;
+    try {
+      body = await response.json();
+    } catch (_) {
+      return {
+        ok: false,
+        status: 502,
+        data: {
+          error: `OpenRouter 返回了无法解析的响应（HTTP ${response.status}）。`,
+        },
+      };
+    }
+
+    if (!response.ok) {
+      const errorObject = body?.error || {};
+      return {
+        ok: false,
+        status: 502,
+        data: {
+          error:
+            errorObject?.message ||
+            body?.message ||
+            "OpenRouter 请求失败。",
+          upstream_status: response.status,
+          upstream_code: errorObject?.code ?? null,
+          upstream_metadata:
+            errorObject?.metadata ?? body?.metadata ?? null,
+        },
+      };
+    }
+
+    const message = body?.choices?.[0]?.message;
+    const toolCall = Array.isArray(message?.tool_calls)
+      ? message.tool_calls.find(
+          (call) =>
+            call?.type === "function" &&
+            call?.function?.name === functionName,
+        )
+      : null;
+
+    if (!toolCall?.function?.arguments) {
+      return {
+        ok: false,
+        status: 502,
+        data: {
+          error: "AI 没有返回可用的结构化结果。",
+          raw_preview: contentToText(message?.content).slice(0, 1000),
+        },
+      };
+    }
+
+    let parsed;
+    try {
+      parsed = JSON.parse(toolCall.function.arguments);
+    } catch (_) {
+      return {
+        ok: false,
+        status: 502,
+        data: {
+          error: "AI 返回的结构化结果不是有效 JSON。",
+          raw_preview: String(toolCall.function.arguments).slice(0, 1000),
+        },
+      };
+    }
+
+    return {
+      ok: true,
+      status: 200,
+      data: parsed,
+      model: body?.model ?? null,
+    };
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      return {
+        ok: false,
+        status: 504,
+        data: {
+          error: "AI 服务响应超时（30 秒）。免费模型当前可能繁忙，请稍后再试。",
+          code: "OPENROUTER_TIMEOUT",
+        },
+      };
+    }
+
+    return {
+      ok: false,
+      status: 502,
+      data: {
+        error:
+          "连接 OpenRouter 失败：" +
+          (error?.message || "未知网络错误"),
+        code: "OPENROUTER_NETWORK_ERROR",
+      },
+    };
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function generateRetest(request, env) {
+  if (request.method === "OPTIONS") {
+    const headers = new Headers({
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+      "Access-Control-Max-Age": "86400",
+    });
+    const origin = request.headers.get("Origin");
+    if (origin) {
+      headers.set("Access-Control-Allow-Origin", origin);
+      headers.set("Vary", "Origin");
+    }
+    return new Response(null, { status: 204, headers });
+  }
+
+  if (request.method !== "POST") {
+    return jsonResponse({ error: "只支持 POST 请求。" }, 405, request);
+  }
+
+  if (!env.OPENROUTER_API_KEY) {
+    return jsonResponse(
+      { error: "服务器尚未配置 OPENROUTER_API_KEY。" },
+      500,
+      request,
+    );
+  }
+
+  let body;
+  try {
+    body = await request.json();
+  } catch (_) {
+    return jsonResponse({ error: "请求数据不是有效的 JSON。" }, 400, request);
+  }
+
+  const knowledgePoint =
+    String(body?.knowledge_point || "").trim();
+
+  if (!knowledgePoint) {
+    return jsonResponse(
+      { error: "缺少需要复测的知识点。" },
+      400,
+      request,
+    );
+  }
+
+  const prompt = `你是一名小学数学老师。
+请针对以下知识点生成 1 道“复测题”，用于判断孩子是否真正理解这个知识点：
+
+知识点：${knowledgePoint}
+
+要求：
+1. 题目必须是小学数学题。
+2. 不要直接重复原来的题目；换数字、换问法或换情境。
+3. 只重点考查这个知识点，避免引入无关的高难知识。
+4. 难度与普通小学练习题接近。
+5. 题目必须只有一个明确、可核验的答案。
+6. correct_answer 必须经过你自己计算和核对。
+7. explanation 用简短中文说明正确思路，供家长查看；不要直接把详细解题过程放在给孩子看的题目中。
+8. 只返回合法 JSON，不要 Markdown。
+
+字段：
+{
+  "question": "复测题",
+  "correct_answer": "标准答案",
+  "knowledge_points": ["${knowledgePoint}"],
+  "explanation": "正确思路"
+}`;
+
+  const result = await requestStructuredJson(
+    env,
+    prompt,
+    "generate_retest_question",
+    {
+      question: {
+        type: "string",
+        description: "新生成的复测题",
+      },
+      correct_answer: {
+        type: "string",
+        description: "正确答案",
+      },
+      knowledge_points: {
+        type: "array",
+        items: { type: "string" },
+        description: "对应知识点",
+      },
+      explanation: {
+        type: "string",
+        description: "正确思路",
+      },
+    },
+    ["question", "correct_answer", "knowledge_points", "explanation"],
+  );
+
+  if (!result.ok) {
+    return jsonResponse(result.data, result.status, request);
+  }
+
+  const output = {
+    question: String(result.data?.question ?? "").trim(),
+    correct_answer: String(result.data?.correct_answer ?? "").trim(),
+    knowledge_points:
+      standardizeKnowledgePoints(result.data?.knowledge_points),
+    explanation: String(result.data?.explanation ?? "").trim(),
+    model: result.model ?? null,
+  };
+
+  if (!output.question || !output.correct_answer) {
+    return jsonResponse(
+      {
+        error: "AI 生成的复测题不完整。",
+        raw_preview: JSON.stringify(result.data).slice(0, 1000),
+      },
+      502,
+      request,
+    );
+  }
+
+  return jsonResponse(output, 200, request);
+}
+
+async function evaluateRetest(request, env) {
+  if (request.method === "OPTIONS") {
+    const headers = new Headers({
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+      "Access-Control-Max-Age": "86400",
+    });
+    const origin = request.headers.get("Origin");
+    if (origin) {
+      headers.set("Access-Control-Allow-Origin", origin);
+      headers.set("Vary", "Origin");
+    }
+    return new Response(null, { status: 204, headers });
+  }
+
+  if (request.method !== "POST") {
+    return jsonResponse({ error: "只支持 POST 请求。" }, 405, request);
+  }
+
+  if (!env.OPENROUTER_API_KEY) {
+    return jsonResponse(
+      { error: "服务器尚未配置 OPENROUTER_API_KEY。" },
+      500,
+      request,
+    );
+  }
+
+  let body;
+  try {
+    body = await request.json();
+  } catch (_) {
+    return jsonResponse({ error: "请求数据不是有效的 JSON。" }, 400, request);
+  }
+
+  const question = String(body?.question || "").trim();
+  const correctAnswer = String(body?.correct_answer || "").trim();
+  const studentAnswer = String(body?.student_answer || "").trim();
+  const knowledgePoints = standardizeKnowledgePoints(
+    body?.knowledge_points,
+  );
+
+  if (!question || !correctAnswer || !studentAnswer) {
+    return jsonResponse(
+      { error: "复测题、正确答案和孩子答案都不能为空。" },
+      400,
+      request,
+    );
+  }
+
+  const prompt = `你是一名小学数学复测老师。
+请判断孩子对下面复测题的回答是否正确。
+
+题目：
+${question}
+
+标准正确答案：
+${correctAnswer}
+
+孩子答案：
+${studentAnswer}
+
+目标知识点：
+${knowledgePoints.join("、") || "未指定"}
+
+要求：
+1. 先自行核对标准答案，避免因为格式差异误判。
+2. 只判断孩子最终答案是否正确；如果孩子答案表达方式不同但数学含义相同，视为正确。
+3. 如果错误，判断主要错误类型，只从以下选择一个：
+计算错误、概念理解错误、审题错误、方法/步骤错误、抄写/书写错误、单位错误、粗心/注意力错误、无法判断。
+4. 如果错误明显属于知识理解不足，error_nature 写“知识理解不足”；如果更像一次偶然失误，写“偶然失误”；证据不足写“无法判断”。
+5. analysis 简短说明判断依据。
+6. 只返回合法 JSON。
+
+字段：
+{
+  "correct": true,
+  "error_type": "无法判断",
+  "error_nature": "无法判断",
+  "analysis": "说明"
+}`;
+
+  const result = await requestStructuredJson(
+    env,
+    prompt,
+    "evaluate_retest_answer",
+    {
+      correct: {
+        type: "boolean",
+        description: "孩子最终答案是否正确",
+      },
+      error_type: {
+        type: "string",
+        description: "错误类型",
+      },
+      error_nature: {
+        type: "string",
+        description: "错误性质",
+      },
+      analysis: {
+        type: "string",
+        description: "判断依据",
+      },
+    },
+    ["correct", "error_type", "error_nature", "analysis"],
+  );
+
+  if (!result.ok) {
+    return jsonResponse(result.data, result.status, request);
+  }
+
+  const errorType = standardizeErrorType(result.data?.error_type);
+  const errorNature = result.data?.correct
+    ? ""
+    : standardizeErrorNature(
+        result.data?.error_nature,
+        errorType,
+      );
+
+  return jsonResponse(
+    {
+      correct: Boolean(result.data?.correct),
+      error_type: result.data?.correct ? "" : errorType,
+      error_nature: result.data?.correct ? "" : errorNature,
+      analysis: String(result.data?.analysis ?? "").trim(),
+      knowledge_points: knowledgePoints,
+      model: result.model ?? null,
+    },
+    200,
+    request,
+  );
+}
+
 async function analyzeImage(request, env) {
   if (request.method === "OPTIONS") {
     const headers = new Headers({
@@ -605,6 +1009,14 @@ export default {
 
     if (url.pathname === "/api/analyze") {
       return analyzeImage(request, env);
+    }
+
+    if (url.pathname === "/api/retest/generate") {
+      return generateRetest(request, env);
+    }
+
+    if (url.pathname === "/api/retest/evaluate") {
+      return evaluateRetest(request, env);
     }
 
     return env.ASSETS.fetch(request);
