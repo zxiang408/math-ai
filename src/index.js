@@ -317,166 +317,208 @@ function normalizeResult(result) {
 }
 
 async function requestStructuredJson(env, prompt, functionName, properties, required) {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 30000);
+  async function doRequest(useStructuredFormat) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000);
 
-  try {
-    const response = await fetch(
-      "https://openrouter.ai/api/v1/chat/completions",
-      {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${env.OPENROUTER_API_KEY}`,
-          "Content-Type": "application/json",
-          "HTTP-Referer": "https://math-ai.zxiang88688.workers.dev",
-          "X-Title": "小学数学 AI",
-        },
-        body: JSON.stringify({
-          // Prefer Qwen free, then allow OpenRouter's free-model router
-          // to select another compatible free model if the preferred route
-          // is temporarily unavailable.
-          models: [
-            "qwen/qwen3.8-27b:free",
-            "openrouter/free",
-          ],
-          provider: {
-            require_parameters: true,
-            allow_fallbacks: true,
-          },
-          temperature: 0.2,
-          max_tokens: 1200,
-          response_format: {
-            type: "json_schema",
-            json_schema: {
-              name: functionName,
-              strict: true,
-              schema: {
-                type: "object",
-                properties,
-                required,
-                additionalProperties: false,
-              },
-            },
-          },
-          messages: [
-            {
-              role: "user",
-              content: prompt,
-            },
-          ],
-        }),
-        signal: controller.signal,
-      },
-    );
-
-    let body;
     try {
-      body = await response.json();
-    } catch (_) {
-      return {
-        ok: false,
-        status: 502,
-        data: {
-          error: `OpenRouter 返回了无法解析的响应（HTTP ${response.status}）。`,
+      const requestBody = {
+        // Prefer Qwen free, then allow OpenRouter's free-model router
+        // to select another compatible free model if the preferred route
+        // is temporarily unavailable.
+        models: [
+          "qwen/qwen3.8-27b:free",
+          "openrouter/free",
+        ],
+        provider: {
+          require_parameters: true,
+          allow_fallbacks: true,
         },
+        temperature: 0.2,
+        max_tokens: 1200,
+        messages: [
+          {
+            role: "user",
+            content: prompt,
+          },
+        ],
       };
-    }
 
-    if (!response.ok) {
-      const errorObject = body?.error || {};
+      // First try the stronger JSON Schema constraint.
+      // Some free-model/provider combinations may ignore it or fail to
+      // return parsable structured output, so the caller can retry without
+      // this field when necessary.
+      if (useStructuredFormat) {
+        requestBody.response_format = {
+          type: "json_schema",
+          json_schema: {
+            name: functionName,
+            strict: true,
+            schema: {
+              type: "object",
+              properties,
+              required,
+              additionalProperties: false,
+            },
+          },
+        };
+      }
+
+      const response = await fetch(
+        "https://openrouter.ai/api/v1/chat/completions",
+        {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${env.OPENROUTER_API_KEY}`,
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://math-ai.zxiang88688.workers.dev",
+            "X-Title": "小学数学 AI",
+          },
+          body: JSON.stringify(requestBody),
+          signal: controller.signal,
+        },
+      );
+
+      let body;
+      try {
+        body = await response.json();
+      } catch (_) {
+        return {
+          ok: false,
+          status: 502,
+          retryable: false,
+          data: {
+            error: `OpenRouter 返回了无法解析的响应（HTTP ${response.status}）。`,
+          },
+        };
+      }
+
+      if (!response.ok) {
+        const errorObject = body?.error || {};
+        return {
+          ok: false,
+          status: 502,
+          retryable: useStructuredFormat && [400, 422].includes(response.status),
+          data: {
+            error:
+              errorObject?.message ||
+              body?.message ||
+              "OpenRouter 请求失败。",
+            upstream_status: response.status,
+            upstream_code: errorObject?.code ?? null,
+            upstream_metadata:
+              errorObject?.metadata ?? body?.metadata ?? null,
+          },
+        };
+      }
+
+      const message = body?.choices?.[0]?.message;
+
+      const toolCall = Array.isArray(message?.tool_calls)
+        ? message.tool_calls.find(
+            (call) =>
+              call?.type === "function" &&
+              call?.function?.name === functionName,
+          )
+        : null;
+
+      let parsed = null;
+
+      // Preferred path: the model used the requested function/tool call.
+      if (toolCall?.function?.arguments) {
+        try {
+          parsed = JSON.parse(
+            toolCall.function.arguments
+          );
+        } catch (_) {
+          parsed = extractJson(
+            toolCall.function.arguments
+          );
+        }
+      }
+
+      // Compatibility path: some free models return the same JSON
+      // directly in message.content instead of using the tool call.
+      if (!parsed) {
+        parsed = extractJson(message?.content);
+      }
+
+      const rawText = contentToText(
+        toolCall?.function?.arguments ||
+        message?.content
+      );
+
+      if (!parsed) {
+        return {
+          ok: false,
+          status: 502,
+          retryable: useStructuredFormat,
+          data: {
+            error: "AI 返回了内容，但无法解析为有效的结构化 JSON。",
+            raw_preview: rawText.slice(0, 1200),
+          },
+        };
+      }
+
+      return {
+        ok: true,
+        status: 200,
+        data: parsed,
+        model: body?.model ?? null,
+      };
+    } catch (error) {
+      if (error?.name === "AbortError") {
+        return {
+          ok: false,
+          status: 504,
+          retryable: false,
+          data: {
+            error: "AI 服务响应超时（30 秒）。免费模型当前可能繁忙，请稍后再试。",
+            code: "OPENROUTER_TIMEOUT",
+          },
+        };
+      }
+
       return {
         ok: false,
         status: 502,
+        retryable: false,
         data: {
           error:
-            errorObject?.message ||
-            body?.message ||
-            "OpenRouter 请求失败。",
-          upstream_status: response.status,
-          upstream_code: errorObject?.code ?? null,
-          upstream_metadata:
-            errorObject?.metadata ?? body?.metadata ?? null,
+            "连接 OpenRouter 失败：" +
+            (error?.message || "未知网络错误"),
+          code: "OPENROUTER_NETWORK_ERROR",
         },
       };
+    } finally {
+      clearTimeout(timeoutId);
     }
+  }
 
-    const message = body?.choices?.[0]?.message;
+  const first = await doRequest(true);
 
-    const toolCall = Array.isArray(message?.tool_calls)
-      ? message.tool_calls.find(
-          (call) =>
-            call?.type === "function" &&
-            call?.function?.name === functionName,
-        )
-      : null;
+  // Free models are not always consistent about structured-output
+  // compliance. If the schema-constrained call fails at the formatting
+  // layer, retry once with a plain JSON request. The prompt still requires
+  // a single legal JSON object, and extractJson() handles common wrappers.
+  if (!first.ok && first.retryable) {
+    const second = await doRequest(false);
 
-    let parsed = null;
-
-    // Preferred path: the model used the requested function/tool call.
-    if (toolCall?.function?.arguments) {
-      try {
-        parsed = JSON.parse(
-          toolCall.function.arguments
-        );
-      } catch (_) {
-        parsed = extractJson(
-          toolCall.function.arguments
-        );
-      }
-    }
-
-    // Compatibility path: some free models return the same JSON
-    // directly in message.content instead of using the tool call.
-    if (!parsed) {
-      parsed = extractJson(message?.content);
-    }
-
-    if (!parsed) {
-      return {
-        ok: false,
-        status: 502,
-        data: {
-          error: "AI 返回了内容，但无法解析为有效的结构化 JSON。",
-          raw_preview:
-            contentToText(
-              toolCall?.function?.arguments ||
-              message?.content
-            ).slice(0, 1200),
-        },
-      };
+    if (second.ok) {
+      return second;
     }
 
     return {
-      ok: true,
-      status: 200,
-      data: parsed,
-      model: body?.model ?? null,
-    };
-  } catch (error) {
-    if (error?.name === "AbortError") {
-      return {
-        ok: false,
-        status: 504,
-        data: {
-          error: "AI 服务响应超时（30 秒）。免费模型当前可能繁忙，请稍后再试。",
-          code: "OPENROUTER_TIMEOUT",
-        },
-      };
-    }
-
-    return {
-      ok: false,
-      status: 502,
+      ...second,
       data: {
-        error:
-          "连接 OpenRouter 失败：" +
-          (error?.message || "未知网络错误"),
-        code: "OPENROUTER_NETWORK_ERROR",
+        ...second.data,
+        first_attempt_error: first.data?.error || null,
+        first_attempt_preview: first.data?.raw_preview || null,
       },
     };
-  } finally {
-    clearTimeout(timeoutId);
   }
+
+  return first;
 }
 
 async function generateRetest(request, env) {
