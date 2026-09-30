@@ -1,4 +1,4 @@
-const APP_VERSION = "V0.9.0";
+const APP_VERSION = "V0.9.2";
 
 const JSON_HEADERS = {
   "Content-Type": "application/json; charset=UTF-8",
