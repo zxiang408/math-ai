@@ -1327,26 +1327,6 @@ advance / retry / simplify / finish
 }
 
 
-      action: action,
-      coach_message:
-        String(parsed.coach_message || "").trim(),
-      next_prompt: nextPrompt,
-      diagnosis:
-        String(parsed.diagnosis || "").trim(),
-      confidence:
-        typeof parsed.confidence === "number"
-          ? Math.max(0, Math.min(1, parsed.confidence))
-          : null,
-      model: result.model,
-      fallback_count:
-        Math.max(0, failures.length),
-    },
-    200,
-    request,
-  );
-}
-
-
 async function analyzeImage(request, env) {
   if (request.method === "OPTIONS") {
     const headers = new Headers({
@@ -1450,7 +1430,7 @@ confidence 为 0 到 1 之间的小数，表示你对整道题识别与分析的
   const providers = getAIProviders(env);
   const failures = [];
 
-  const structuredBody =   const baseBody = {
+  const baseBody = {
     temperature: 0.2,
     max_tokens: 1800,
     reasoning: { enabled: false },
@@ -1528,35 +1508,12 @@ confidence 为 0 到 1 之间的小数，表示你对整道题识别与分析的
       },
     ],
   };
-;
-
-  function makeJsonObjectFallbackBody() {
-    const fallback = JSON.parse(JSON.stringify(structuredBody));
-    delete fallback.response_format;
-    fallback.response_format = { type: "json_object" };
-    return fallback;
-  }
-
   for (const provider of providers) {
-    let result = await fetchAIProvider(
+    const result = await fetchAIProvider(
       provider,
-      structuredBody,
+      baseBody,
       30000,
     );
-
-    // Groq supports both JSON Schema and JSON Object mode. If the stricter
-    // schema request is rejected, retry once using the older JSON mode.
-    if (
-      !result.ok &&
-      provider.name === "groq" &&
-      [400, 422].includes(result.status)
-    ) {
-      result = await fetchAIProvider(
-        provider,
-        makeJsonObjectFallbackBody(),
-        30000,
-      );
-    }
 
     if (!result.ok) {
       failures.push({
@@ -1568,6 +1525,35 @@ confidence 为 0 到 1 之间的小数，表示你对整道题识别与分析的
     }
 
     const message = result.body?.choices?.[0]?.message;
+
+    const toolCall = Array.isArray(message?.tool_calls)
+      ? message.tool_calls.find(
+          (call) =>
+            call?.type === "function" &&
+            call?.function?.name === "analyze_math_problem",
+        )
+      : null;
+
+    if (toolCall?.function?.arguments) {
+      try {
+        const parsedArgs = JSON.parse(toolCall.function.arguments);
+        const normalized = normalizeResult(parsedArgs);
+        normalized.model =
+          result.body?.model ||
+          provider.model ||
+          provider.name;
+        normalized.ai_provider = provider.name;
+        return jsonResponse(normalized, 200, request);
+      } catch (_) {
+        failures.push({
+          provider: provider.name,
+          status: 502,
+          reason: "AI 工具调用返回的数据不是有效 JSON。",
+        });
+        continue;
+      }
+    }
+
     const content = message?.content;
     const parsed = extractJson(content);
 
@@ -1584,21 +1570,13 @@ confidence 为 0 到 1 之间的小数，表示你对整道题识别与分析的
     failures.push({
       provider: provider.name,
       status: 502,
-      reason: "AI 返回成功，但内容无法解析为 JSON。",
+      reason: "AI 没有返回可用的结构化分析结果。",
     });
   }
 
-  const failureSummary = failures
-    .map(function (item) {
-      return item.provider + "：" + (item.reason || ("HTTP " + item.status));
-    })
-    .join("；");
-
   return jsonResponse(
     {
-      error:
-        "所有已配置的 AI 服务都没有返回可用的分析结果。" +
-        (failureSummary ? " 详细原因：" + failureSummary : ""),
+      error: "所有已配置的 AI 服务都没有返回可用的分析结果。",
       code: "ANALYZE_ALL_PROVIDERS_FAILED",
       failures: failures,
     },
