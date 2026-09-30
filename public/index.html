@@ -753,7 +753,7 @@
 
     <div class="notice">
 
-      当前是 V0.15。
+      当前是 V0.15.2。
       <br>
       已接入 OpenRouter 免费模型路由，用于错题照片识别与 AI 分析。
       <br>
@@ -909,9 +909,9 @@
   </div>
 
   <div class="footer">
-    小学数学 AI · V0.15
+    小学数学 AI · V0.15.2
     <br>
-    <span id="appVersion">程序版本：V0.15</span>
+    <span id="appVersion">程序版本：V0.15.2</span>
   </div>
 
 </div>
@@ -4559,7 +4559,6 @@
 
     let tutor = null;
     let tutorRequestFailed = false;
-    let tutorFailureMessage = "";
 
     if (
       activeTraining.tutor_mode === "ai" &&
@@ -4593,7 +4592,7 @@
                 steps,
               history:
                 Array.isArray(activeTraining.tutor_history)
-                  ? activeTraining.tutor_history.slice(-8)
+                  ? activeTraining.tutor_history.slice(-6)
                   : []
             })
           }
@@ -4605,18 +4604,15 @@
           tutor = data;
         } else {
           tutorRequestFailed = true;
-          tutorFailureMessage =
-            data?.error || "AI Tutor 没有返回可用结果。";
-          throw new Error(tutorFailureMessage);
+          throw new Error(
+            data?.error ||
+            "AI Tutor 没有返回可用结果。"
+          );
         }
       } catch (error) {
         console.error("AI Tutor 请求失败：", error);
-        tutorRequestFailed = true;
-        tutorFailureMessage =
-          tutorFailureMessage ||
-          error?.message ||
-          "未知错误";
         tutor = null;
+        tutorRequestFailed = true;
       }
     }
 
@@ -4736,12 +4732,14 @@
         tutor?.coach_message ||
         fallbackFeedback;
 
-      if (tutor) {
+      if (
+        tutor?.coach_message
+      ) {
         trainingStatus.textContent =
           "🧠 AI Tutor 已根据孩子刚才的回答调整辅导。";
       } else if (tutorRequestFailed) {
         trainingStatus.textContent =
-          "⚠️ 本次 AI Tutor 未响应，已使用原有确定性辅导作为兜底。";
+          "⚠️ AI Tutor 未响应，已使用原有确定性辅导作为兜底。";
       } else {
         trainingStatus.textContent =
           "先解决当前这一步，不要急着往后做。";
@@ -4750,7 +4748,7 @@
       let nextStep = null;
 
       if (
-        tutorAction === "simplify" ||
+        tutor?.action === "simplify" ||
         activeTraining.stepWrongCounts[index] >= 2
       ) {
         nextStep =
@@ -4775,14 +4773,10 @@
 
           trainingHintText.textContent =
             nextStep.prompt;
-
-          if (tutor) {
-            trainingStatus.textContent =
-              "🧠 AI Tutor 判断需要拆小这一步，我们换一种更容易理解的问法。";
-          } else {
-            trainingStatus.textContent =
-              "我们把这一步拆得更小一点，再试一次。";
-          }
+          trainingStatus.textContent =
+            tutor
+              ? "🧠 AI Tutor 判断需要拆小这一步，我们换一种更容易理解的问法。"
+              : "我们把这一步拆得更小一点，再试一次。";
         }
       }
 
@@ -4791,7 +4785,7 @@
 
         if (
           tutor?.next_prompt &&
-          tutorAction === "retry"
+          tutor.action === "retry"
         ) {
           activeTraining.currentDisplayedStep = {
             ...step,
@@ -4801,12 +4795,9 @@
             tutor.next_prompt;
         }
 
-        if (tutor && tutorAction === "retry") {
+        if (tutor && tutor.action === "retry") {
           trainingStatus.textContent =
             "🧠 AI Tutor 换一种问法，我们再想一次。";
-        } else if (!tutor && !tutorRequestFailed) {
-          trainingStatus.textContent =
-            "先解决当前这一步，不要急着往后做。";
         }
       }
 
@@ -4830,16 +4821,7 @@
 
     activeTraining.stepWrongCounts[index] = 0;
 
-    let action = tutorAction;
-
-    if (!action) {
-      action =
-        index >= steps.length - 1
-          ? "finish"
-          : "advance";
-    }
-
-    if (action === "finish" || index >= steps.length - 1) {
+    if (index >= steps.length - 1) {
       activeTraining.currentStep =
         steps.length;
 
@@ -4849,11 +4831,8 @@
       return;
     }
 
-    const nextIndex =
-      index + 1;
-
-    const nextBaseStep =
-      steps[nextIndex];
+    const nextIndex = index + 1;
+    const nextBaseStep = steps[nextIndex];
 
     if (!nextBaseStep) {
       activeTraining.currentStep =
