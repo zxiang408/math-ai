@@ -23,9 +23,6 @@ jobs:
       - name: Install Playwright
         run: npm install --no-save playwright
 
-      - name: Install Chromium
-        run: npx playwright install --with-deps chromium
-
       - name: Start static server
         run: |
           python3 -m http.server 4173 --directory public > /tmp/math-ai-http.log 2>&1 &
