@@ -3,7 +3,13 @@ import {
   extractSingleNumericValue
 } from "../public/math-engine.js";
 
-const APP_VERSION = "V0.22.0";
+import {
+  getArchiveStatus,
+  pushArchive,
+  pullArchive
+} from "./cloud-archive.js";
+
+const APP_VERSION = "V0.23.0";
 
 const JSON_HEADERS = {
   "Content-Type": "application/json; charset=UTF-8",
@@ -1621,6 +1627,207 @@ confidence 为 0 到 1 之间的小数，表示你对整道题识别与分析的
   );
 }
 
+
+
+const CLOUD_LEARNER_ID = "local-default";
+
+function resolveCloudLearnerId(env) {
+  return String(
+    env?.MATH_AI_LEARNER_ID ||
+    CLOUD_LEARNER_ID
+  ).trim() || CLOUD_LEARNER_ID;
+}
+
+function syncPreflight(request) {
+  const headers = new Headers({
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Max-Age": "86400"
+  });
+
+  const origin = request.headers.get("Origin");
+  if (origin) {
+    headers.set("Access-Control-Allow-Origin", origin);
+    headers.set("Vary", "Origin");
+  }
+
+  return new Response(null, {
+    status: 204,
+    headers
+  });
+}
+
+function validateSyncAccess(request, env) {
+  const expected = String(
+    env?.MATH_AI_SYNC_ACCESS_TOKEN || ""
+  ).trim();
+
+  if (!expected) {
+    return null;
+  }
+
+  const actual =
+    request.headers.get("X-Math-AI-Sync-Token") || "";
+
+  if (actual !== expected) {
+    return jsonResponse(
+      {
+        error: "云端学习档案访问被拒绝。",
+        code: "SYNC_ACCESS_DENIED"
+      },
+      401,
+      request
+    );
+  }
+
+  return null;
+}
+
+async function syncStatus(request, env) {
+  if (request.method === "OPTIONS") {
+    return syncPreflight(request);
+  }
+
+  if (request.method !== "GET") {
+    return jsonResponse(
+      { error: "只支持 GET 或 OPTIONS 请求。" },
+      405,
+      request
+    );
+  }
+
+  const denied = validateSyncAccess(request, env);
+  if (denied) {
+    return denied;
+  }
+
+  try {
+    const result = await getArchiveStatus(
+      env,
+      resolveCloudLearnerId(env)
+    );
+
+    return jsonResponse(
+      result,
+      200,
+      request
+    );
+  } catch (error) {
+    console.error("云端档案状态检查失败：", error);
+    return jsonResponse(
+      {
+        configured: false,
+        code: "SUPABASE_STATUS_ERROR",
+        error: "无法连接云端学习档案。",
+      },
+      502,
+      request
+    );
+  }
+}
+
+async function syncPush(request, env) {
+  if (request.method === "OPTIONS") {
+    return syncPreflight(request);
+  }
+
+  if (request.method !== "POST") {
+    return jsonResponse(
+      { error: "只支持 POST 或 OPTIONS 请求。" },
+      405,
+      request
+    );
+  }
+
+  const denied = validateSyncAccess(request, env);
+  if (denied) {
+    return denied;
+  }
+
+  let body;
+  try {
+    body = await request.json();
+  } catch (_) {
+    return jsonResponse(
+      {
+        error: "请求数据不是有效的 JSON。",
+        code: "INVALID_SYNC_JSON"
+      },
+      400,
+      request
+    );
+  }
+
+  const result = await pushArchive(
+    env,
+    resolveCloudLearnerId(env),
+    body?.events
+  );
+
+  const status =
+    result.ok === false
+      ? result.code === "SUPABASE_NOT_CONFIGURED"
+        ? 503
+        : 400
+      : 200;
+
+  return jsonResponse(
+    result,
+    status,
+    request
+  );
+}
+
+async function syncPull(request, env) {
+  if (request.method === "OPTIONS") {
+    return syncPreflight(request);
+  }
+
+  if (request.method !== "GET") {
+    return jsonResponse(
+      { error: "只支持 GET 或 OPTIONS 请求。" },
+      405,
+      request
+    );
+  }
+
+  const denied = validateSyncAccess(request, env);
+  if (denied) {
+    return denied;
+  }
+
+  try {
+    const result = await pullArchive(
+      env,
+      resolveCloudLearnerId(env)
+    );
+
+    const status =
+      result.ok === false
+        ? result.code === "SUPABASE_NOT_CONFIGURED"
+          ? 503
+          : 502
+        : 200;
+
+    return jsonResponse(
+      result,
+      status,
+      request
+    );
+  } catch (error) {
+    console.error("云端档案读取失败：", error);
+    return jsonResponse(
+      {
+        ok: false,
+        code: "SYNC_PULL_ERROR",
+        error: "读取云端学习档案失败。"
+      },
+      502,
+      request
+    );
+  }
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -1639,6 +1846,18 @@ export default {
 
     if (url.pathname === "/api/tutor/step") {
       return tutorStep(request, env);
+    }
+
+    if (url.pathname === "/api/sync/status") {
+      return syncStatus(request, env);
+    }
+
+    if (url.pathname === "/api/sync/push") {
+      return syncPush(request, env);
+    }
+
+    if (url.pathname === "/api/sync/pull") {
+      return syncPull(request, env);
     }
 
     return env.ASSETS.fetch(request);
