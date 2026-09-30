@@ -402,6 +402,121 @@
       font-weight: 600;
     }
 
+    .knowledge-graph-summary {
+      margin-top: 14px;
+      padding: 12px 14px;
+      border-radius: 10px;
+      background: #f8fafc;
+      border: 1px solid #eaecf0;
+      color: #475467;
+      line-height: 1.7;
+      font-size: 14px;
+    }
+
+    .knowledge-graph-domain {
+      margin-top: 16px;
+      padding: 16px;
+      border-radius: 14px;
+      background: #f8fafc;
+      border: 1px solid #e5e7eb;
+    }
+
+    .knowledge-graph-domain-title {
+      font-size: 18px;
+      font-weight: bold;
+      line-height: 1.5;
+    }
+
+    .knowledge-graph-section {
+      margin-top: 14px;
+    }
+
+    .knowledge-graph-section-title {
+      font-weight: 600;
+      color: #344054;
+      margin-bottom: 8px;
+    }
+
+    .knowledge-graph-node {
+      margin-top: 10px;
+      padding: 14px;
+      border-radius: 12px;
+      background: #fff;
+      border: 1px solid #eaecf0;
+    }
+
+    .knowledge-graph-node-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .knowledge-graph-node-name {
+      font-weight: bold;
+      line-height: 1.5;
+    }
+
+    .knowledge-graph-node-status {
+      display: inline-block;
+      padding: 4px 9px;
+      border-radius: 999px;
+      background: #eef2ff;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .knowledge-graph-node-meta {
+      margin-top: 6px;
+      color: #667085;
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    .knowledge-graph-block {
+      margin-top: 9px;
+      padding-top: 9px;
+      border-top: 1px solid #f0f2f5;
+    }
+
+    .knowledge-graph-block-title {
+      font-weight: 600;
+      font-size: 13px;
+      color: #344054;
+    }
+
+    .knowledge-graph-skill {
+      display: inline-block;
+      margin: 5px 6px 0 0;
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: #f2f4f7;
+      color: #475467;
+      font-size: 12px;
+    }
+
+    .knowledge-graph-dependency {
+      color: #475467;
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    .knowledge-graph-bridge {
+      margin-top: 10px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      background: #fff7ed;
+      color: #9a3412;
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    .knowledge-graph-unmeasured {
+      color: #667085;
+      font-size: 12px;
+    }
+
     .history-empty {
       color: #667085;
       padding: 10px 0;
@@ -638,11 +753,11 @@
 
     <div class="notice">
 
-      当前是 V0.10。
+      当前是 V0.11。
       <br>
       已接入 OpenRouter 免费模型路由，用于错题照片识别与 AI 分析。
       <br>
-      当前已支持基础错题库、知识点标准化统计、能力档案、复测、针对性训练，以及分步骤互动辅导；V0.10 新增长期保持模型：按间隔复测追踪保持、到期与遗忘风险，并在复测失败后进入恢复流程。
+      当前已支持基础错题库、知识点标准化统计、能力档案、复测、针对性训练、分步骤互动辅导，以及长期保持模型；V0.11 新增长期知识结构图：把知识点、子能力与前后依赖统一组织起来。
 
     </div>
 
@@ -657,6 +772,16 @@
     </div>
 
     <div id="abilityList"></div>
+  </div>
+
+  <!-- 数学知识结构 -->
+  <div class="card" id="knowledgeGraphCard">
+    <h2>🗺️ 数学知识结构</h2>
+    <div class="subtitle">
+      把“知识点”放回完整结构：父层 → 知识点 → 子能力 → 前置/后续关系。结构关系是预先定义的，能力状态只由孩子真实作答与训练证据更新。
+    </div>
+    <div class="knowledge-graph-summary" id="knowledgeGraphSummary"></div>
+    <div id="knowledgeGraph"></div>
   </div>
 
   <!-- 针对性训练 -->
@@ -774,9 +899,9 @@
   </div>
 
   <div class="footer">
-    小学数学 AI · V0.9.2
+    小学数学 AI · V0.11
     <br>
-    <span id="appVersion">程序版本：V0.9.2</span>
+    <span id="appVersion">程序版本：V0.11</span>
   </div>
 
 </div>
@@ -823,6 +948,12 @@
 
   const abilityList =
     document.getElementById("abilityList");
+
+  const knowledgeGraphSummary =
+    document.getElementById("knowledgeGraphSummary");
+
+  const knowledgeGraph =
+    document.getElementById("knowledgeGraph");
 
   const retestCard =
     document.getElementById("retestCard");
@@ -997,6 +1128,18 @@
     }
 
     const rules = [
+      ["图形与几何 / 正方形周长", ["正方形的周长", "正方形周长"]],
+      ["图形与几何 / 长方形周长", ["长方形的周长", "长方形周长"]],
+      ["图形与几何 / 三角形面积", ["三角形的面积", "三角形面积"]],
+      ["图形与几何 / 立体图形体积", ["立体图形体积", "长方体体积", "正方体体积", "体积公式"]],
+      ["图形与几何 / 角与直线", ["角的认识", "角与直线", "平行与垂直", "垂直与平行"]],
+      ["数与代数 / 因数与倍数", ["因数与倍数", "因数、倍数", "因数和倍数"]],
+      ["数与代数 / 公因数与公倍数", ["公因数", "公倍数", "最大公因数", "最小公倍数"]],
+      ["数与代数 / 分数运算", ["分数加减", "分数加法", "分数减法", "分数乘法", "分数除法", "分数运算"]],
+      ["数与代数 / 小数运算", ["小数加减", "小数加法", "小数减法", "小数乘法", "小数除法", "小数运算"]],
+      ["数与代数 / 方程", ["方程", "等式的性质", "解方程"]],
+      ["统计与概率 / 平均数", ["平均数"]],
+      ["统计与概率 / 统计图", ["条形统计图", "折线统计图", "统计图"]]
       ["图形与几何 / 正方形面积", ["正方形的面积公式", "正方形面积公式", "正方形面积"]],
       ["图形与几何 / 长方形面积", ["长方形的面积公式", "长方形面积公式", "长方形面积"]],
       ["数与代数 / 积的变化规律", ["积的变化规律", "乘积的变化规律", "积的倍数变化"]],
@@ -1038,6 +1181,549 @@
     });
 
     return result;
+  }
+
+  /*
+   * V0.11 数学知识结构图
+   * 说明：
+   * 1. graph 只定义“知识之间的结构关系”，不直接判断孩子是否掌握。
+   * 2. 节点状态必须来自错题、复测或训练等真实记录。
+   * 3. 没有证据的节点显示“尚未评估”，不自动视为薄弱。
+   * 4. 当前五个已接入训练证据的知识点，会进一步显示子能力证据；
+   *    其他节点先作为可扩展结构底座。
+   */
+  const KNOWLEDGE_GRAPH = [
+    {
+      domain: "数与代数",
+      sections: [
+        {
+          name: "数与运算",
+          nodes: [
+            {
+              id: "数与代数 / 整数与数位",
+              label: "整数与数位",
+              prerequisites: [],
+              skills: ["读写整数", "数位关系", "数的大小比较"]
+            },
+            {
+              id: "数与代数 / 四则运算",
+              label: "四则运算",
+              prerequisites: ["数与代数 / 整数与数位"],
+              skills: ["运算顺序", "基础计算", "结果检查"]
+            },
+            {
+              id: "数与代数 / 运算律",
+              label: "运算律",
+              prerequisites: ["数与代数 / 四则运算"],
+              skills: ["交换律", "结合律", "分配律"]
+            },
+            {
+              id: "数与代数 / 积的变化规律",
+              label: "积的变化规律",
+              prerequisites: ["数与代数 / 四则运算"],
+              skills: ["识别不变因数", "合并两个因数的变化", "变化倍数判断"]
+            },
+            {
+              id: "数与代数 / 倍数关系",
+              label: "倍数关系",
+              prerequisites: ["数与代数 / 四则运算"],
+              skills: ["倍数 → 份数", "总份数", "总和 ÷ 总份数"]
+            },
+            {
+              id: "数与代数 / 因数与倍数",
+              label: "因数与倍数",
+              prerequisites: ["数与代数 / 倍数关系"],
+              skills: ["判断因数", "判断倍数", "因数与倍数的对应关系"]
+            },
+            {
+              id: "数与代数 / 公因数与公倍数",
+              label: "公因数与公倍数",
+              prerequisites: ["数与代数 / 因数与倍数"],
+              skills: ["寻找公因数", "寻找公倍数", "最大公因数/最小公倍数"]
+            }
+          ]
+        },
+        {
+          name: "分数与小数",
+          nodes: [
+            {
+              id: "数与代数 / 分数",
+              label: "分数",
+              prerequisites: ["数与代数 / 整数与数位"],
+              skills: ["分数的意义", "分数单位", "分数大小比较"]
+            },
+            {
+              id: "数与代数 / 分数运算",
+              label: "分数运算",
+              prerequisites: ["数与代数 / 分数", "数与代数 / 四则运算"],
+              skills: ["分数加减", "分数乘除", "约分与通分"]
+            },
+            {
+              id: "数与代数 / 小数",
+              label: "小数",
+              prerequisites: ["数与代数 / 整数与数位"],
+              skills: ["小数意义", "小数大小比较", "小数与分数联系"]
+            },
+            {
+              id: "数与代数 / 小数运算",
+              label: "小数运算",
+              prerequisites: ["数与代数 / 小数", "数与代数 / 四则运算"],
+              skills: ["小数点对齐", "小数计算", "结果检查"]
+            }
+          ]
+        },
+        {
+          name: "数量关系",
+          nodes: [
+            {
+              id: "数与代数 / 比与比例",
+              label: "比与比例",
+              prerequisites: ["数与代数 / 分数"],
+              skills: ["比的意义", "比的基本性质", "比例关系"]
+            },
+            {
+              id: "数与代数 / 方程",
+              label: "方程",
+              prerequisites: ["数与代数 / 四则运算", "数与代数 / 比与比例"],
+              skills: ["等式关系", "列方程", "解方程"]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      domain: "图形与几何",
+      sections: [
+        {
+          name: "平面图形",
+          nodes: [
+            {
+              id: "图形与几何 / 角与直线",
+              label: "角与直线",
+              prerequisites: [],
+              skills: ["角的认识", "平行与垂直", "角的大小比较"]
+            },
+            {
+              id: "图形与几何 / 长方形周长",
+              label: "长方形周长",
+              prerequisites: ["图形与几何 / 角与直线"],
+              skills: ["周长概念", "长方形周长公式", "单位使用"]
+            },
+            {
+              id: "图形与几何 / 正方形周长",
+              label: "正方形周长",
+              prerequisites: ["图形与几何 / 角与直线"],
+              skills: ["周长概念", "正方形周长公式", "单位使用"]
+            },
+            {
+              id: "图形与几何 / 长方形面积",
+              label: "长方形面积",
+              prerequisites: ["图形与几何 / 长方形周长", "数与代数 / 四则运算"],
+              skills: ["面积概念", "长×宽", "面积单位"]
+            },
+            {
+              id: "图形与几何 / 正方形面积",
+              label: "正方形面积",
+              prerequisites: ["图形与几何 / 正方形周长", "数与代数 / 四则运算"],
+              skills: ["面积概念", "边长×边长", "边长变化与面积变化"]
+            },
+            {
+              id: "图形与几何 / 三角形面积",
+              label: "三角形面积",
+              prerequisites: ["图形与几何 / 正方形面积"],
+              skills: ["底×高", "÷2", "面积单位"]
+            }
+          ]
+        },
+        {
+          name: "立体图形",
+          nodes: [
+            {
+              id: "图形与几何 / 立体图形体积",
+              label: "立体图形体积",
+              prerequisites: ["图形与几何 / 长方形面积", "数与代数 / 四则运算"],
+              skills: ["体积概念", "长×宽×高", "体积单位"]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      domain: "统计与概率",
+      sections: [
+        {
+          name: "数据分析",
+          nodes: [
+            {
+              id: "统计与概率 / 平均数",
+              label: "平均数",
+              prerequisites: ["数与代数 / 四则运算"],
+              skills: ["总数", "数据个数", "总数÷个数"]
+            },
+            {
+              id: "统计与概率 / 统计图",
+              label: "统计图",
+              prerequisites: ["数与代数 / 小数"],
+              skills: ["读图", "数据比较", "根据数据作图"]
+            }
+          ]
+        }
+      ]
+    }
+  ];
+
+  function flattenKnowledgeGraphNodes() {
+    const result = [];
+
+    KNOWLEDGE_GRAPH.forEach(function (domain) {
+      domain.sections.forEach(function (section) {
+        section.nodes.forEach(function (node) {
+          result.push({
+            ...node,
+            domain: domain.domain,
+            section: section.name
+          });
+        });
+      });
+    });
+
+    return result;
+  }
+
+  function getKnowledgeGraphNode(point) {
+    return flattenKnowledgeGraphNodes().find(function (node) {
+      return node.id === point;
+    }) || null;
+  }
+
+  function getKnowledgeGraphNodesByPrerequisite(point) {
+    return flattenKnowledgeGraphNodes().filter(function (node) {
+      return Array.isArray(node.prerequisites) &&
+        node.prerequisites.includes(point);
+    });
+  }
+
+  function getGraphNodeState(node, history, retestHistory) {
+    const matching = history.filter(function (item) {
+      return standardizeKnowledgePoints(
+        item.knowledge_points
+      ).includes(node.id);
+    });
+
+    if (matching.length === 0) {
+      return {
+        status: "unassessed",
+        statusText: "尚未评估",
+        matchingCount: 0,
+        knowledgeState: null,
+        retention: null
+      };
+    }
+
+    const knowledgeState =
+      getKnowledgeState(
+        node.id,
+        history,
+        retestHistory
+      );
+
+    const retention =
+      knowledgeState &&
+      knowledgeState.state === "mastered"
+        ? getRetentionState(
+            node.id,
+            retestHistory,
+            knowledgeState
+          )
+        : null;
+
+    return {
+      status:
+        knowledgeState.state === "observed"
+          ? "observed"
+          : knowledgeState.state,
+      statusText:
+        knowledgeState.state === "observed"
+          ? "待观察"
+          : knowledgeState.stateText,
+      matchingCount: matching.length,
+      knowledgeState: knowledgeState,
+      retention: retention
+    };
+  }
+
+  function renderKnowledgeGraphSkillStates(
+    node,
+    trainingHistory
+  ) {
+    const knownDefinitions =
+      getTrainingAbilityDefinitions(node.id);
+
+    if (knownDefinitions.length === 0) {
+      return {
+        skills: Array.isArray(node.skills) ? node.skills : [],
+        measured: false
+      };
+    }
+
+    const skillRows = knownDefinitions.map(function (definition) {
+      const state =
+        getTrainingEvidenceAbilityState(
+          node.id,
+          definition.key,
+          trainingHistory
+        );
+
+      return {
+        label: definition.label,
+        stateText: state.stateText,
+        sessions: state.sessions
+      };
+    });
+
+    return {
+      skills: skillRows,
+      measured: true
+    };
+  }
+
+  function renderKnowledgeGraph(history) {
+    if (!knowledgeGraph || !knowledgeGraphSummary) {
+      return;
+    }
+
+    const retestHistory = loadRetestHistory();
+    const trainingHistory = loadTrainingHistory();
+    const nodes = flattenKnowledgeGraphNodes();
+
+    const assessedNodes = nodes.filter(function (node) {
+      return history.some(function (item) {
+        return standardizeKnowledgePoints(
+          item.knowledge_points
+        ).includes(node.id);
+      });
+    });
+
+    const knowledgeEvidenceNodes = assessedNodes.filter(function (node) {
+      const state =
+        getKnowledgeState(
+          node.id,
+          history,
+          retestHistory
+        );
+      return state.state !== "observed";
+    });
+
+    const masteredNodes = assessedNodes.filter(function (node) {
+      return getKnowledgeState(
+        node.id,
+        history,
+        retestHistory
+      ).state === "mastered";
+    });
+
+    knowledgeGraphSummary.textContent =
+      "当前知识结构共 " + nodes.length +
+      " 个节点，其中已有孩子实际作答证据的节点 " +
+      assessedNodes.length +
+      " 个；其中形成“知识理解不足”证据的节点 " +
+      knowledgeEvidenceNodes.length +
+      " 个，已达到“已掌握”的节点 " +
+      masteredNodes.length +
+      " 个。未产生作答证据的节点只显示“尚未评估”，不会被系统自动判定为薄弱。";
+
+    knowledgeGraph.textContent = "";
+
+    KNOWLEDGE_GRAPH.forEach(function (domain) {
+      const domainWrapper = document.createElement("div");
+      domainWrapper.className = "knowledge-graph-domain";
+
+      const domainTitle = document.createElement("div");
+      domainTitle.className = "knowledge-graph-domain-title";
+      domainTitle.textContent = "📚 " + domain.domain;
+      domainWrapper.appendChild(domainTitle);
+
+      domain.sections.forEach(function (section) {
+        const sectionWrapper = document.createElement("div");
+        sectionWrapper.className = "knowledge-graph-section";
+
+        const sectionTitle = document.createElement("div");
+        sectionTitle.className = "knowledge-graph-section-title";
+        sectionTitle.textContent = section.name;
+        sectionWrapper.appendChild(sectionTitle);
+
+        section.nodes.forEach(function (node) {
+          const state = getGraphNodeState(
+            node,
+            history,
+            retestHistory
+          );
+
+          const nodeWrapper = document.createElement("div");
+          nodeWrapper.className = "knowledge-graph-node";
+
+          const head = document.createElement("div");
+          head.className = "knowledge-graph-node-head";
+
+          const name = document.createElement("div");
+          name.className = "knowledge-graph-node-name";
+          name.textContent = "◆ " + node.label;
+
+          const status = document.createElement("div");
+          status.className = "knowledge-graph-node-status";
+          status.textContent = state.statusText;
+
+          head.appendChild(name);
+          head.appendChild(status);
+          nodeWrapper.appendChild(head);
+
+          const meta = document.createElement("div");
+          meta.className = "knowledge-graph-node-meta";
+
+          if (state.matchingCount === 0) {
+            meta.textContent =
+              "暂无这个知识点的错题/复测证据。";
+          } else {
+            meta.textContent =
+              "已有相关记录 " + state.matchingCount + " 条。";
+
+            if (
+              state.retention &&
+              state.retention.stateText
+            ) {
+              meta.textContent +=
+                " ｜ 长期保持：" +
+                state.retention.stateText;
+            }
+          }
+
+          nodeWrapper.appendChild(meta);
+
+          const skillsWrapper = document.createElement("div");
+          skillsWrapper.className = "knowledge-graph-block";
+
+          const skillsTitle = document.createElement("div");
+          skillsTitle.className = "knowledge-graph-block-title";
+          skillsTitle.textContent = "子能力";
+          skillsWrapper.appendChild(skillsTitle);
+
+          const skillStates =
+            renderKnowledgeGraphSkillStates(
+              node,
+              trainingHistory
+            );
+
+          if (skillStates.measured) {
+            skillStates.skills.forEach(function (skill) {
+              const skillTag = document.createElement("span");
+              skillTag.className = "knowledge-graph-skill";
+              skillTag.textContent =
+                skill.label + " · " +
+                skill.stateText +
+                (
+                  skill.sessions > 0
+                    ? "（" + skill.sessions + "轮）"
+                    : ""
+                );
+              skillsWrapper.appendChild(skillTag);
+            });
+          } else {
+            skillStates.skills.forEach(function (skill) {
+              const skillTag = document.createElement("span");
+              skillTag.className = "knowledge-graph-skill";
+              skillTag.textContent = skill + " · 尚未单独验证";
+              skillsWrapper.appendChild(skillTag);
+            });
+          }
+
+          nodeWrapper.appendChild(skillsWrapper);
+
+          if (
+            Array.isArray(node.prerequisites) &&
+            node.prerequisites.length > 0
+          ) {
+            const dependencyWrapper =
+              document.createElement("div");
+            dependencyWrapper.className =
+              "knowledge-graph-block";
+
+            const dependencyTitle =
+              document.createElement("div");
+            dependencyTitle.className =
+              "knowledge-graph-block-title";
+            dependencyTitle.textContent =
+              "前置知识";
+
+            const dependency =
+              document.createElement("div");
+            dependency.className =
+              "knowledge-graph-dependency";
+
+            dependency.textContent =
+              node.prerequisites.map(function (id) {
+                const prerequisite =
+                  getKnowledgeGraphNode(id);
+                return prerequisite
+                  ? prerequisite.label
+                  : id;
+              }).join(" → ");
+
+            dependencyWrapper.appendChild(dependencyTitle);
+            dependencyWrapper.appendChild(dependency);
+            nodeWrapper.appendChild(dependencyWrapper);
+          }
+
+          const nextNodes =
+            getKnowledgeGraphNodesByPrerequisite(node.id);
+
+          if (nextNodes.length > 0) {
+            const nextWrapper =
+              document.createElement("div");
+            nextWrapper.className =
+              "knowledge-graph-block";
+
+            const nextTitle =
+              document.createElement("div");
+            nextTitle.className =
+              "knowledge-graph-block-title";
+            nextTitle.textContent =
+              "后续支撑";
+
+            const nextText =
+              document.createElement("div");
+            nextText.className =
+              "knowledge-graph-dependency";
+            nextText.textContent =
+              nextNodes.map(function (nextNode) {
+                return nextNode.label;
+              }).join("、");
+
+            nextWrapper.appendChild(nextTitle);
+            nextWrapper.appendChild(nextText);
+            nodeWrapper.appendChild(nextWrapper);
+          }
+
+          if (
+            skillStates.measured === false &&
+            state.matchingCount > 0
+          ) {
+            const bridge =
+              document.createElement("div");
+            bridge.className =
+              "knowledge-graph-bridge";
+            bridge.textContent =
+              "这个节点已经有实际记录，但目前还没有接入专属的分步骤训练证据。后续训练模块接入后，子能力状态会继续细化。";
+            nodeWrapper.appendChild(bridge);
+          }
+
+          sectionWrapper.appendChild(nodeWrapper);
+        });
+
+        domainWrapper.appendChild(sectionWrapper);
+      });
+
+      knowledgeGraph.appendChild(domainWrapper);
+    });
   }
 
   let activeRetest = null;
@@ -4830,6 +5516,7 @@
     const history = loadHistory();
 
     renderAbilityProfile(history);
+    renderKnowledgeGraph(history);
     renderKnowledgeOverview(history);
 
     historySummary.textContent =
