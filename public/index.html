@@ -652,7 +652,7 @@
         id="analyzeButton"
         disabled
       >
-        开始 AI 分析
+        开始测试分析（Mock AI）
       </button>
 
       <button
@@ -669,6 +669,27 @@
       class="status"
       id="status"
     ></div>
+
+    <div class="notice" id="mockModePanel">
+      <strong>🧪 开发测试模式</strong><br>
+      当前默认不调用 Groq / OpenRouter，使用本地 Mock AI 数据继续验证完整学习闭环。
+      <div class="button-row" style="margin-top:10px;">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+          <input type="checkbox" id="mockAiToggle" checked>
+          使用 Mock AI（推荐）
+        </label>
+      </div>
+      <div style="margin-top:8px;">
+        <label for="mockCaseSelect">测试案例：</label>
+        <select id="mockCaseSelect" style="padding:8px 10px;border:1px solid #d0d5dd;border-radius:8px;font-size:14px;">
+          <option value="multiples">倍数关系：份数概念混淆</option>
+          <option value="square_area">正方形面积：边长扩大2倍</option>
+          <option value="product_change">积的变化规律：变化倍数判断</option>
+          <option value="four_operations">四则运算：运算顺序</option>
+          <option value="decimal">小数：小数点对齐</option>
+        </select>
+      </div>
+    </div>
 
   </div>
 
@@ -762,9 +783,11 @@
 
     <div class="notice">
 
-      当前是 V0.17.0。
+      当前是 V0.18.0。
       <br>
-      已接入 OpenRouter 免费模型路由，用于错题照片识别与 AI 分析。
+      已加入可开关的 Mock AI 开发测试模式；默认不调用外部 AI，可继续验证错题库、能力档案、针对性训练、分步骤辅导与复测闭环。
+      <br>
+      真实 AI 模式仍保留 Groq → OpenRouter 路由。
       <br>
       当前已支持基础错题库、知识点标准化统计、能力档案、复测、针对性训练、分步骤互动辅导，以及长期保持模型；V0.11 建立知识结构图；V0.12 让前置知识证据参与训练路径；V0.13 进行全局训练调度；V0.14 建立训练→复测→长期保持闭环；V0.15 接入 AI 个性化辅导；V0.16 建立统一数学验证引擎；V0.17 建立统一学习数据模型与旧数据兼容层。
 
@@ -922,9 +945,9 @@
   </div>
 
   <div class="footer">
-    小学数学 AI · V0.17.0
+    小学数学 AI · V0.18.0
     <br>
-    <span id="appVersion">程序版本：V0.17.0</span>
+    <span id="appVersion">程序版本：V0.18.0 · Mock AI 可切换</span>
   </div>
 
 </div>
@@ -2077,6 +2100,9 @@ window.MathAILearningModel = {
     verifyAcceptedAnswer
   } = window.MathAIMathEngine;
 
+  let useMockAI = true;
+  let selectedMockCase = "multiples";
+
   const {
     buildUnifiedLearningModel,
     summarizeUnifiedLearningModel,
@@ -2101,6 +2127,12 @@ window.MathAILearningModel = {
 
   const clearButton =
     document.getElementById("clearButton");
+
+  const mockAiToggle =
+    document.getElementById("mockAiToggle");
+
+  const mockCaseSelect =
+    document.getElementById("mockCaseSelect");
 
   const status =
     document.getElementById("status");
@@ -4567,7 +4599,10 @@ window.MathAILearningModel = {
       stepMode: "normal",
       sessionIndex: Math.max(1, Number(sessionIndex || 1)),
       tutor_mode:
-        trainingPoint === "数与代数 / 倍数关系"
+        (
+          !useMockAI &&
+          trainingPoint === "数与代数 / 倍数关系"
+        )
           ? "ai"
           : "deterministic",
       tutor_history: []
@@ -7679,10 +7714,129 @@ window.MathAILearningModel = {
   }
 
 
+  function generateMockAnalysis(caseKey) {
+    const cases = {
+      multiples: {
+        question: "一个数是另一个数的5倍。如果两个数的和是72，求这两个数中较小的数。",
+        student_answer: "12",
+        correct_answer: "12",
+        knowledge_points: ["数与代数 / 倍数关系"],
+        error_type: "概念理解错误",
+        error_nature: "知识理解不足",
+        analysis: "孩子把“5倍”对应的份数关系和总份数混淆了。较小数是1份，较大数是5份，两个数合起来应是6份；本次 Mock 数据故意保留一个“答案看起来正确但知识证据仍需训练”的案例，用于验证后续学习流程。",
+        confidence: 1,
+        unclear: false,
+        ai_provider: "mock",
+        model: "mock-multiples"
+      },
+      square_area: {
+        question: "一个正方形的边长扩大2倍，面积扩大多少倍？",
+        student_answer: "2倍",
+        correct_answer: "4倍",
+        knowledge_points: ["图形与几何 / 正方形面积"],
+        error_type: "概念理解错误",
+        error_nature: "知识理解不足",
+        analysis: "孩子把边长扩大2倍直接理解成面积也扩大2倍，忽略了面积由两个边长相乘决定。",
+        confidence: 1,
+        unclear: false,
+        ai_provider: "mock",
+        model: "mock-square-area"
+      },
+      product_change: {
+        question: "一个因数扩大3倍，另一个因数不变，积扩大多少倍？",
+        student_answer: "3倍",
+        correct_answer: "3倍",
+        knowledge_points: ["数与代数 / 积的变化规律"],
+        error_type: "无法判断",
+        error_nature: "无法判断",
+        analysis: "这是一个用于验证“正确答案进入后续训练/复测流程”的 Mock 案例。",
+        confidence: 1,
+        unclear: false,
+        ai_provider: "mock",
+        model: "mock-product-change"
+      },
+      four_operations: {
+        question: "计算：48－6×5＝？",
+        student_answer: "210",
+        correct_answer: "18",
+        knowledge_points: ["数与代数 / 四则运算"],
+        error_type: "方法/步骤错误",
+        error_nature: "知识理解不足",
+        analysis: "孩子可能先做减法再做乘法，没有遵循先乘除后加减的运算顺序。",
+        confidence: 1,
+        unclear: false,
+        ai_provider: "mock",
+        model: "mock-four-operations"
+      },
+      decimal: {
+        question: "计算：4.6－2.35＝？",
+        student_answer: "2.65",
+        correct_answer: "2.25",
+        knowledge_points: ["数与代数 / 小数"],
+        error_type: "计算错误",
+        error_nature: "知识理解不足",
+        analysis: "本题用于验证小数训练链路，可重点观察小数点对齐和逐位计算。",
+        confidence: 1,
+        unclear: false,
+        ai_provider: "mock",
+        model: "mock-decimal"
+      }
+    };
+
+    return cases[caseKey] || cases.multiples;
+  }
+
+  function updateMockModeUI() {
+    useMockAI = Boolean(mockAiToggle?.checked);
+    selectedMockCase = mockCaseSelect?.value || "multiples";
+
+    if (useMockAI) {
+      analyzeButton.textContent = "开始测试分析（Mock AI）";
+      status.textContent = selectedFile
+        ? "开发测试模式：图片已选择，不会调用外部 AI，可以直接开始测试。"
+        : "开发测试模式已开启：不调用 Groq / OpenRouter。";
+    } else {
+      analyzeButton.textContent = "开始 AI 分析";
+      status.textContent = selectedFile
+        ? "真实 AI 模式：图片已选择，可以开始分析。"
+        : "真实 AI 模式已开启：将调用已配置的 AI Provider。";
+    }
+  }
+
   // 调用 Cloudflare Worker 后端
   analyzeButton.addEventListener("click", async function () {
     if (!selectedFile) {
       status.textContent = "请先选择一张错题照片。";
+      return;
+    }
+
+    if (useMockAI) {
+      analyzeButton.disabled = true;
+      clearButton.disabled = true;
+      resultCard.style.display = "none";
+      status.textContent = "🧪 正在使用 Mock AI 生成测试分析……";
+
+      try {
+        const data = generateMockAnalysis(selectedMockCase);
+
+        renderResult(data);
+
+        const saved = saveMistakeRecord(data);
+        renderHistory();
+
+        status.textContent = saved
+          ? "Mock AI 分析完成，已经进入真实的错题库与能力模型。"
+          : "Mock AI 分析完成，但错题保存失败，请检查浏览器存储空间。";
+      } catch (error) {
+        console.error(error);
+        status.textContent =
+          "Mock AI 测试失败：" + (error.message || "未知错误");
+      } finally {
+        analyzeButton.disabled = false;
+        clearButton.disabled = false;
+        updateMockModeUI();
+      }
+
       return;
     }
 
@@ -7753,6 +7907,7 @@ window.MathAILearningModel = {
         data.unclear
           ? "分析完成，但照片中有内容不够清晰，请核对结果。" + confidenceText
           : "AI 分析完成。" + confidenceText;
+      updateMockModeUI();
 
     } catch (error) {
       console.error(error);
@@ -7768,7 +7923,25 @@ window.MathAILearningModel = {
   // 清空时同步清理已选择的文件
   clearButton.addEventListener("click", function () {
     selectedFile = null;
+    updateMockModeUI();
   });
+
+  if (mockAiToggle) {
+    mockAiToggle.addEventListener("change", function () {
+      updateMockModeUI();
+    });
+  }
+
+  if (mockCaseSelect) {
+    mockCaseSelect.addEventListener("change", function () {
+      selectedMockCase = mockCaseSelect.value;
+      if (useMockAI) {
+        updateMockModeUI();
+      }
+    });
+  }
+
+  updateMockModeUI();
 
 
 </script>
