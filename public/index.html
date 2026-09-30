@@ -7378,6 +7378,7 @@ window.MathAILearningModel = {
   let cloudSyncBusy = false;
   let cloudSyncQueued = false;
   let cloudSyncInitialized = false;
+  let cloudSyncHydrating = false;
 
   function setCloudSyncStatus(textValue) {
     if (cloudSyncStatus) {
@@ -7587,7 +7588,7 @@ window.MathAILearningModel = {
   }
 
   function scheduleCloudPush() {
-    if (!cloudSyncConfigured) {
+    if (!cloudSyncConfigured || cloudSyncHydrating) {
       return;
     }
 
@@ -7651,7 +7652,12 @@ window.MathAILearningModel = {
       );
 
       if (Array.isArray(result.events)) {
-        applyCloudRecordsToLocalStorage(result.events);
+        cloudSyncHydrating = true;
+        try {
+          applyCloudRecordsToLocalStorage(result.events);
+        } finally {
+          cloudSyncHydrating = false;
+        }
         renderHistory();
       }
 
@@ -7703,7 +7709,12 @@ window.MathAILearningModel = {
       const result = await cloudSyncRequest("/api/sync/pull");
 
       if (Array.isArray(result.events)) {
-        applyCloudRecordsToLocalStorage(result.events);
+        cloudSyncHydrating = true;
+        try {
+          applyCloudRecordsToLocalStorage(result.events);
+        } finally {
+          cloudSyncHydrating = false;
+        }
         renderHistory();
       }
 
