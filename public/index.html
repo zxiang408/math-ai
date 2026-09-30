@@ -753,11 +753,11 @@
 
     <div class="notice">
 
-      当前是 V0.12。
+      当前是 V0.15。
       <br>
       已接入 OpenRouter 免费模型路由，用于错题照片识别与 AI 分析。
       <br>
-      当前已支持基础错题库、知识点标准化统计、能力档案、复测、针对性训练、分步骤互动辅导，以及长期保持模型；V0.11 建立知识结构图；V0.12 让前置知识证据参与训练路径；V0.13 进行全局训练调度；V0.14 建立训练→复测→长期保持闭环。
+      当前已支持基础错题库、知识点标准化统计、能力档案、复测、针对性训练、分步骤互动辅导，以及长期保持模型；V0.11 建立知识结构图；V0.12 让前置知识证据参与训练路径；V0.13 进行全局训练调度；V0.14 建立训练→复测→长期保持闭环；V0.15 开始接入 AI 个性化辅导。
 
     </div>
 
@@ -909,9 +909,9 @@
   </div>
 
   <div class="footer">
-    小学数学 AI · V0.12
+    小学数学 AI · V0.15
     <br>
-    <span id="appVersion">程序版本：V0.12</span>
+    <span id="appVersion">程序版本：V0.15</span>
   </div>
 
 </div>
@@ -3650,7 +3650,12 @@
       stepWrongCounts: {},
       stepAttemptCounts: {},
       stepMode: "normal",
-      sessionIndex: Math.max(1, Number(sessionIndex || 1))
+      sessionIndex: Math.max(1, Number(sessionIndex || 1)),
+      tutor_mode:
+        trainingPoint === "数与代数 / 倍数关系"
+          ? "ai"
+          : "deterministic",
+      tutor_history: []
     };
 
     trainingCard.style.display = "block";
@@ -4511,7 +4516,7 @@
     applyTrainingNextAction();
   }
 
-  function submitTrainingStep() {
+  async function submitTrainingStep() {
     if (!activeTraining) return;
 
     const index = activeTraining.currentStep || 0;
@@ -4540,7 +4545,7 @@
       return;
     }
 
-    const passed =
+    const localPassed =
       trainingStepAccepted(
         studentAnswer,
         step
@@ -4548,6 +4553,93 @@
 
     activeTraining.stepAttemptCounts[index] =
       (activeTraining.stepAttemptCounts[index] || 0) + 1;
+
+    submitTrainingStepButton.disabled = true;
+    trainingStepAnswer.disabled = true;
+
+    let tutor = null;
+
+    if (
+      activeTraining.tutor_mode === "ai" &&
+      activeTraining.knowledge_point === "数与代数 / 倍数关系"
+    ) {
+      trainingStatus.textContent =
+        "🧠 正在理解孩子这一步的回答……";
+
+      try {
+        const response = await fetch(
+          "/api/tutor/step",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+              knowledge_point:
+                activeTraining.knowledge_point,
+              question:
+                activeTraining.question,
+              correct_answer:
+                activeTraining.correct_answer,
+              step_index:
+                index,
+              current_prompt:
+                step.prompt || "",
+              student_answer:
+                studentAnswer,
+              steps:
+                steps,
+              history:
+                Array.isArray(activeTraining.tutor_history)
+                  ? activeTraining.tutor_history.slice(-8)
+                  : []
+            })
+          }
+        );
+
+        const data = await response.json();
+
+        if (response.ok && data && data.enabled) {
+          tutor = data;
+        } else if (!response.ok) {
+          throw new Error(
+            data.error ||
+            "AI 辅导请求失败。"
+          );
+        }
+      } catch (error) {
+        console.error("AI Tutor 请求失败：", error);
+        tutor = null;
+      }
+    }
+
+    // 数学真值仍由本地程序判断；AI 负责理解、反馈和教学决策。
+    const passed =
+      localPassed;
+
+    const tutorAction =
+      tutor
+        ? String(tutor.action || "")
+        : "";
+
+    if (tutor) {
+      if (!Array.isArray(activeTraining.tutor_history)) {
+        activeTraining.tutor_history = [];
+      }
+
+      activeTraining.tutor_history.push({
+        step_index: index,
+        student_answer: studentAnswer,
+        passed: passed,
+        action: tutorAction,
+        diagnosis:
+          String(tutor.diagnosis || ""),
+        confidence:
+          tutor.confidence ?? null,
+        created_at:
+          new Date().toISOString()
+      });
+    }
 
     const evidenceMeta =
       getTrainingEvidenceMeta(
@@ -4596,7 +4688,23 @@
       simplification_used:
         activeTraining.stepMode === "simplified",
       session_index:
-        activeTraining.sessionIndex
+        activeTraining.sessionIndex,
+      tutor_mode:
+        activeTraining.tutor_mode || "deterministic",
+      tutor_action:
+        tutorAction || null,
+      tutor_diagnosis:
+        tutor
+          ? String(tutor.diagnosis || "")
+          : "",
+      tutor_confidence:
+        tutor?.confidence ?? null,
+      tutor_model:
+        tutor?.model ?? null,
+      tutor_coach_message:
+        tutor
+          ? String(tutor.coach_message || "")
+          : ""
     });
 
     if (!passed) {
@@ -4605,12 +4713,11 @@
 
       trainingStepResult.style.display = "block";
       trainingStepResult.textContent =
-        activeTraining.stepWrongCounts[index] >= 2
-          ? "❌ 这一步还不对。我们把它再拆小一点。"
-          : "❌ 这一步还不对。先别看后面的步骤。";
+        "❌ 这一步还没有完成，我们继续把它想清楚。";
 
       trainingAdaptiveFeedback.style.display = "block";
-      trainingAdaptiveFeedback.textContent =
+
+      const fallbackFeedback =
         getAdaptiveTrainingFeedback(
           activeTraining.knowledge_point,
           index,
@@ -4619,53 +4726,144 @@
           activeTraining
         );
 
-      if (activeTraining.stepWrongCounts[index] >= 2) {
-        const simplified =
+      trainingAdaptiveFeedback.textContent =
+        tutor?.coach_message ||
+        fallbackFeedback;
+
+      let nextStep = null;
+
+      if (
+        tutorAction === "simplify" ||
+        activeTraining.stepWrongCounts[index] >= 2
+      ) {
+        nextStep =
           getSimplifiedTrainingStep(
             activeTraining.knowledge_point,
             index,
             activeTraining
           );
 
-        if (simplified) {
+        if (nextStep) {
+          if (tutor?.next_prompt) {
+            nextStep = {
+              ...nextStep,
+              prompt: tutor.next_prompt
+            };
+          }
+
           activeTraining.currentDisplayedStep =
-            simplified;
+            nextStep;
           activeTraining.stepMode =
             "simplified";
 
           trainingHintText.textContent =
-            simplified.prompt;
+            nextStep.prompt;
           trainingStatus.textContent =
-            "你已经连续两次没有答对这一小步，我们把问题拆得更简单一些。";
+            "我们把这一步拆得更小一点，再试一次。";
         }
-      } else {
-        trainingStatus.textContent =
-          "答对当前这一步后，才能进入下一步。";
       }
 
+      if (!nextStep) {
+        activeTraining.currentDisplayedStep = step;
+
+        if (
+          tutor?.next_prompt &&
+          tutorAction === "retry"
+        ) {
+          activeTraining.currentDisplayedStep = {
+            ...step,
+            prompt: tutor.next_prompt
+          };
+          trainingHintText.textContent =
+            tutor.next_prompt;
+        }
+
+        trainingStatus.textContent =
+          "先解决当前这一步，不要急着往后做。";
+      }
+
+      submitTrainingStepButton.disabled = false;
+      trainingStepAnswer.disabled = false;
       trainingStepAnswer.select();
       return;
     }
 
     trainingStepResult.style.display = "block";
     trainingStepResult.textContent =
-      "✅ 这一步正确！";
+      "✅ 这一步正确！" +
+      (
+        tutor?.coach_message
+          ? " " + tutor.coach_message
+          : ""
+      );
+
     trainingAdaptiveFeedback.style.display = "none";
     trainingAdaptiveFeedback.textContent = "";
 
     activeTraining.stepWrongCounts[index] = 0;
-    activeTraining.currentStep = index + 1;
 
-    if (activeTraining.currentStep >= steps.length) {
+    let action = tutorAction;
+
+    if (!action) {
+      action =
+        index >= steps.length - 1
+          ? "finish"
+          : "advance";
+    }
+
+    if (action === "finish" || index >= steps.length - 1) {
+      activeTraining.currentStep =
+        steps.length;
+
       setTimeout(function () {
         completeTrainingAfterSteps();
       }, 150);
       return;
     }
 
-    setTimeout(function () {
-      showCurrentTrainingStep();
-    }, 150);
+    const nextIndex =
+      index + 1;
+
+    const nextBaseStep =
+      steps[nextIndex];
+
+    if (!nextBaseStep) {
+      activeTraining.currentStep =
+        steps.length;
+      completeTrainingAfterSteps();
+      return;
+    }
+
+    const nextDisplayedStep = {
+      ...nextBaseStep,
+      prompt:
+        tutor?.next_prompt ||
+        nextBaseStep.prompt
+    };
+
+    activeTraining.currentStep =
+      nextIndex;
+    activeTraining.currentDisplayedStep =
+      nextDisplayedStep;
+    activeTraining.stepMode =
+      "normal";
+
+    trainingHint.style.display = "block";
+    trainingHintText.textContent =
+      nextDisplayedStep.prompt;
+    trainingStepAnswer.value = "";
+    trainingStepResult.style.display = "none";
+    trainingStepResult.textContent = "";
+    trainingAdaptiveFeedback.style.display = "none";
+    submitTrainingStepButton.disabled = false;
+    trainingStepAnswer.disabled = false;
+
+    trainingStatus.textContent =
+      tutor
+        ? "🧠 根据刚才的回答，我们继续下一步。"
+        : "第" + (nextIndex + 1) + "步：先独立填写，答对后才能继续。";
+
+    trainingStepAnswer.focus();
   }
 
   smartTrainingButton.addEventListener(
