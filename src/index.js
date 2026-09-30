@@ -1,3 +1,5 @@
+const APP_VERSION = "V0.4.1";
+
 const JSON_HEADERS = {
   "Content-Type": "application/json; charset=UTF-8",
   "Cache-Control": "no-store",
@@ -10,6 +12,9 @@ function jsonResponse(data, status = 200, request) {
     headers.set("Access-Control-Allow-Origin", origin);
     headers.set("Vary", "Origin");
   }
+
+  headers.set("X-Math-AI-Version", APP_VERSION);
+
   return new Response(JSON.stringify(data), { status, headers });
 }
 
