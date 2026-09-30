@@ -1,4 +1,4 @@
-const APP_VERSION = "V0.15.2";
+const APP_VERSION = "V0.15.3";
 
 const JSON_HEADERS = {
   "Content-Type": "application/json; charset=UTF-8",
@@ -985,7 +985,6 @@ async function tutorStep(request, env) {
 
   const point = String(body?.knowledge_point || "").trim();
   const question = String(body?.question || "").trim();
-  const correctAnswer = String(body?.correct_answer || "").trim();
   const currentPrompt = String(body?.current_prompt || "").trim();
   const studentAnswer = String(body?.student_answer || "").trim();
   const stepIndex = Math.max(
@@ -1026,8 +1025,6 @@ async function tutorStep(request, env) {
     };
   });
 
-  // V0.15.2：Tutor 使用轻量纯 JSON 请求。
-  // 不经过通用 json_schema，以降低免费模型因结构化输出不稳定而失败/超时的概率。
   const prompt = `你是一名小学四年级数学一对一辅导老师。
 你现在只辅导“数与代数 / 倍数关系”。
 
@@ -1050,16 +1047,17 @@ ${JSON.stringify(history)}
 - 判断孩子刚才这一步到底哪里想对了、哪里想错了。
 - 不要直接公布整道题最终答案。
 - 不要跳过当前步骤。
-- 如果孩子只是把“较大数的份数”和“总份数”混淆，要明确纠正这种混淆，但仍要让孩子自己回答。
-- 如果孩子答错，重新设计一个更容易理解的短问题。
-- 如果孩子连续卡住，允许把当前问题拆得更小。
-- 如果孩子答对，给出自然的鼓励，并进入下一步。
-- 语言必须像老师对四年级孩子说话，短句、具体、易懂。
+- 如果孩子把“较大数的份数”和“总份数”混淆，要指出这种混淆，但继续让孩子自己回答。
+- 如果孩子错误但接近，换一种更容易理解的短问题。
+- 如果孩子连续卡住，把当前问题拆得更小。
+- 如果孩子理解正确，给出简短鼓励，并进入下一步。
+- 不要把后面的计算提前做完。
+- 语言要像老师对四年级孩子说话，短句、具体、自然。
 - 只输出一个 JSON 对象，不要 Markdown，不要 JSON 之外的文字。
 
-JSON 字段：
+JSON：
 {
-  "action": "advance",
+  "action": "retry",
   "coach_message": "给孩子看的简短反馈",
   "next_prompt": "下一句给孩子看的问题或提示",
   "diagnosis": "对孩子当前理解的简短判断",
@@ -1067,153 +1065,180 @@ JSON 字段：
 }
 
 action 只能是：
-advance
-retry
-simplify
-finish
+advance / retry / simplify / finish
 `;
 
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 12000);
+  const modelCandidates = [
+    "qwen/qwen3.8-27b:free",
+    "openrouter/free",
+  ];
 
-  let response;
-  let upstreamBody;
-
-  try {
-    response = await fetch(
-      "https://openrouter.ai/api/v1/chat/completions",
-      {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${env.OPENROUTER_API_KEY}`,
-          "Content-Type": "application/json",
-          "HTTP-Referer": "https://math-ai.zxiang408.workers.dev",
-          "X-Title": "小学数学 AI Tutor",
-        },
-        body: JSON.stringify({
-          model: "qwen/qwen3.8-27b:free",
-          temperature: 0.2,
-          max_tokens: 500,
-          reasoning: { enabled: false },
-          messages: [
-            {
-              role: "user",
-              content: prompt,
-            },
-          ],
-        }),
-        signal: controller.signal,
-      },
+  async function callTutorModel(model) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(
+      () => controller.abort(),
+      model === "qwen/qwen3.8-27b:free" ? 9000 : 9000,
     );
 
     try {
-      upstreamBody = await response.json();
-    } catch (_) {
-      return jsonResponse(
+      const response = await fetch(
+        "https://openrouter.ai/api/v1/chat/completions",
         {
-          enabled: false,
-          error: `OpenRouter 返回了无法解析的响应（HTTP ${response.status}）。`,
-          code: "TUTOR_BAD_UPSTREAM_RESPONSE",
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${env.OPENROUTER_API_KEY}`,
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://math-ai.zxiang88688.workers.dev",
+            "X-Title": "小学数学 AI Tutor",
+          },
+          body: JSON.stringify({
+            model: model,
+            temperature: 0.2,
+            max_tokens: 450,
+            reasoning: { enabled: false },
+            messages: [
+              {
+                role: "user",
+                content: prompt,
+              },
+            ],
+          }),
+          signal: controller.signal,
         },
-        502,
-        request,
       );
-    }
-  } catch (error) {
-    if (error?.name === "AbortError") {
-      return jsonResponse(
-        {
-          enabled: false,
-          error: "AI Tutor 响应超过12秒。",
-          code: "TUTOR_TIMEOUT",
-        },
-        504,
-        request,
+
+      let body;
+      try {
+        body = await response.json();
+      } catch (_) {
+        return {
+          ok: false,
+          reason: "上游返回无法解析的 JSON。",
+        };
+      }
+
+      if (!response.ok) {
+        return {
+          ok: false,
+          reason:
+            body?.error?.message ||
+            body?.message ||
+            `HTTP ${response.status}`,
+        };
+      }
+
+      const message = body?.choices?.[0]?.message;
+      const parsed = extractJson(
+        contentToText(message?.content),
       );
+
+      if (!parsed) {
+        return {
+          ok: false,
+          reason: "模型返回内容无法解析为 JSON。",
+        };
+      }
+
+      return {
+        ok: true,
+        data: parsed,
+        model: body?.model || model,
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        reason:
+          error?.name === "AbortError"
+            ? "响应超时。"
+            : error?.message || "网络错误。",
+      };
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  let result = null;
+  const failures = [];
+
+  for (const model of modelCandidates) {
+    const attempt = await callTutorModel(model);
+
+    if (attempt.ok) {
+      result = attempt;
+      break;
     }
 
-    return jsonResponse(
-      {
-        enabled: false,
-        error:
-          "连接 AI Tutor 失败：" +
-          (error?.message || "未知网络错误"),
-        code: "TUTOR_NETWORK_ERROR",
-      },
-      502,
-      request,
-    );
-  } finally {
-    clearTimeout(timeoutId);
+    failures.push({
+      model: model,
+      reason: attempt.reason,
+    });
   }
 
-  if (!response.ok) {
-    const errorObject = upstreamBody?.error || {};
-
+  if (!result) {
     return jsonResponse(
       {
         enabled: false,
-        error:
-          errorObject?.message ||
-          upstreamBody?.message ||
-          "AI Tutor 请求失败。",
-        upstream_status: response.status,
-        upstream_code: errorObject?.code ?? null,
-        code: "TUTOR_UPSTREAM_ERROR",
+        error: "AI Tutor 两个免费模型都没有返回可用结果。",
+        code: "TUTOR_ALL_MODELS_FAILED",
+        failures: failures,
       },
       502,
       request,
     );
   }
 
-  const message = upstreamBody?.choices?.[0]?.message;
-  const rawText = contentToText(message?.content);
-  const parsed = extractJson(rawText);
-
-  if (!parsed) {
-    return jsonResponse(
-      {
-        enabled: false,
-        error: "AI Tutor 返回内容无法解析为 JSON。",
-        code: "TUTOR_INVALID_JSON",
-        raw_preview: rawText.slice(0, 1000),
-      },
-      502,
-      request,
-    );
-  }
+  const parsed = result.data || {};
 
   let action = String(parsed.action || "retry");
-  if (!["advance", "retry", "simplify", "finish"].includes(action)) {
+  if (
+    ![
+      "advance",
+      "retry",
+      "simplify",
+      "finish",
+    ].includes(action)
+  ) {
     action = "retry";
   }
 
-  let nextPrompt = String(parsed.next_prompt || "").trim();
-
-  // 数学真值和步骤推进仍由程序控制，AI 不能自行判定一个错误答案为正确并跳步。
-  const currentAccepted =
+  const accepted =
     Array.isArray(steps[stepIndex]?.accepted)
       ? steps[stepIndex].accepted
       : [];
 
   const studentNormalized =
-    studentAnswer.trim().replace(/\s+/g, "");
+    studentAnswer
+      .trim()
+      .replace(/\s+/g, "");
 
-  const localAccepted = currentAccepted.some(function (value) {
-    return (
-      String(value).trim().replace(/\s+/g, "") ===
-      studentNormalized
+  const localAccepted =
+    accepted.some(function (value) {
+      return (
+        String(value)
+          .trim()
+          .replace(/\s+/g, "") ===
+        studentNormalized
+      );
+    });
+
+  const studentNumber =
+    extractLastNumericValue(
+      studentNormalized,
     );
-  });
 
-  const studentNumber = extractLastNumericValue(studentNormalized);
   const numericAccepted =
     studentNumber !== null &&
-    currentAccepted.some(function (value) {
+    accepted.some(function (value) {
       const n = extractLastNumericValue(
-        String(value).trim().replace(/\s+/g, ""),
+        String(value)
+          .trim()
+          .replace(/\s+/g, ""),
       );
-      return n !== null && Math.abs(studentNumber - n) < 1e-10;
+
+      return (
+        n !== null &&
+        Math.abs(studentNumber - n) < 1e-10
+      );
     });
 
   const deterministicCorrect =
@@ -1224,9 +1249,15 @@ finish
       stepIndex >= steps.length - 1
         ? "finish"
         : "advance";
-  } else if (action === "advance" || action === "finish") {
+  } else if (
+    action === "advance" ||
+    action === "finish"
+  ) {
     action = "retry";
   }
+
+  let nextPrompt =
+    String(parsed.next_prompt || "").trim();
 
   if (!nextPrompt) {
     nextPrompt =
@@ -1242,18 +1273,18 @@ finish
       enabled: true,
       correct: deterministicCorrect,
       action: action,
-      coach_message: String(
-        parsed.coach_message || "",
-      ).trim(),
+      coach_message:
+        String(parsed.coach_message || "").trim(),
       next_prompt: nextPrompt,
-      diagnosis: String(
-        parsed.diagnosis || "",
-      ).trim(),
+      diagnosis:
+        String(parsed.diagnosis || "").trim(),
       confidence:
         typeof parsed.confidence === "number"
           ? Math.max(0, Math.min(1, parsed.confidence))
           : null,
-      model: upstreamBody?.model ?? "qwen/qwen3.8-27b:free",
+      model: result.model,
+      fallback_count:
+        Math.max(0, failures.length),
     },
     200,
     request,
