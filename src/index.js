@@ -239,8 +239,10 @@ function standardizeErrorType(value) {
   return "无法判断";
 }
 
-function standardizeErrorNature(value) {
+function standardizeErrorNature(value, errorType) {
   const text = String(value ?? "").trim();
+  const normalizedErrorType =
+    standardizeErrorType(errorType);
 
   if (ERROR_NATURES.includes(text)) {
     return text;
@@ -263,17 +265,37 @@ function standardizeErrorNature(value) {
     return "知识理解不足";
   }
 
+  // A concept-understanding error is evidence of a knowledge-related
+  // error for this occurrence, while the ability profile still requires
+  // repeated evidence before calling the knowledge point persistently weak.
+  if (normalizedErrorType === "概念理解错误") {
+    return "知识理解不足";
+  }
+
+  if (
+    normalizedErrorType === "抄写/书写错误" ||
+    normalizedErrorType === "粗心/注意力错误"
+  ) {
+    return "偶然失误";
+  }
+
   return "无法判断";
 }
 
 function normalizeResult(result) {
+  const errorType =
+    standardizeErrorType(result?.error_type);
+
   return {
     question: String(result?.question ?? "").trim(),
     student_answer: String(result?.student_answer ?? "").trim(),
     correct_answer: String(result?.correct_answer ?? "").trim(),
     knowledge_points: standardizeKnowledgePoints(result?.knowledge_points),
-    error_type: standardizeErrorType(result?.error_type),
-    error_nature: standardizeErrorNature(result?.error_nature),
+    error_type: errorType,
+    error_nature: standardizeErrorNature(
+      result?.error_nature,
+      errorType
+    ),
     analysis: String(result?.analysis ?? "").trim(),
     confidence:
       typeof result?.confidence === "number"
