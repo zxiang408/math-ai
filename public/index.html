@@ -753,11 +753,11 @@
 
     <div class="notice">
 
-      当前是 V0.15.2。
+      当前是 V0.16.0。
       <br>
       已接入 OpenRouter 免费模型路由，用于错题照片识别与 AI 分析。
       <br>
-      当前已支持基础错题库、知识点标准化统计、能力档案、复测、针对性训练、分步骤互动辅导，以及长期保持模型；V0.11 建立知识结构图；V0.12 让前置知识证据参与训练路径；V0.13 进行全局训练调度；V0.14 建立训练→复测→长期保持闭环；V0.15 开始接入 AI 个性化辅导。
+      当前已支持基础错题库、知识点标准化统计、能力档案、复测、针对性训练、分步骤互动辅导，以及长期保持模型；V0.11 建立知识结构图；V0.12 让前置知识证据参与训练路径；V0.13 进行全局训练调度；V0.14 建立训练→复测→长期保持闭环；V0.15 接入 AI 个性化辅导；V0.16 建立统一数学验证引擎。
 
     </div>
 
@@ -909,16 +909,21 @@
   </div>
 
   <div class="footer">
-    小学数学 AI · V0.15.2
+    小学数学 AI · V0.16.0
     <br>
-    <span id="appVersion">程序版本：V0.15.2</span>
+    <span id="appVersion">程序版本：V0.16.0</span>
   </div>
 
 </div>
 
 
 
-<script>
+<script type="module">
+  import {
+    verifyMathAnswer,
+    verifyAcceptedAnswer
+  } from "./math-engine.js";
+
 
   const uploadArea =
     document.getElementById("uploadArea");
@@ -1869,44 +1874,14 @@
     return null;
   }
 
-  function extractSingleNumber(value) {
-    const text = String(value || "")
-      .trim()
-      .replace(/\s+/g, "");
-
-    if (!text) return null;
-
-    const matches = text.match(/-?(?:\d+(?:\.\d+)?|\.\d+)/g);
-
-    if (!matches || matches.length !== 1) {
-      return null;
-    }
-
-    const number = Number(matches[0]);
-    return Number.isFinite(number) ? number : null;
-  }
-
   function compareSimpleRetestAnswers(studentAnswer, correctAnswer) {
-    const studentText = String(studentAnswer || "")
-      .trim()
-      .replace(/\s+/g, "");
+    const verdict =
+      verifyMathAnswer(
+        studentAnswer,
+        correctAnswer
+      );
 
-    const correctText = String(correctAnswer || "")
-      .trim()
-      .replace(/\s+/g, "");
-
-    if (!studentText || !correctText) return null;
-
-    if (studentText === correctText) return true;
-
-    const studentNumber = extractSingleNumber(studentText);
-    const correctNumber = extractSingleNumber(correctText);
-
-    if (studentNumber === null || correctNumber === null) {
-      return null;
-    }
-
-    return Math.abs(studentNumber - correctNumber) < 1e-10;
+    return verdict.correct;
   }
 
   function loadRetestHistory() {
@@ -4227,16 +4202,15 @@
   }
 
   function trainingStepAccepted(studentAnswer, step) {
-    const student = normalizeTrainingStepAnswer(studentAnswer);
-    if (!student) return false;
+    const verdict =
+      verifyAcceptedAnswer(
+        studentAnswer,
+        Array.isArray(step?.accepted)
+          ? step.accepted
+          : []
+      );
 
-    const accepted = Array.isArray(step.accepted)
-      ? step.accepted
-      : [];
-
-    return accepted.some(function (value) {
-      return normalizeTrainingStepAnswer(value) === student;
-    });
+    return verdict.correct === true;
   }
 
   function getAdaptiveTrainingFeedback(
