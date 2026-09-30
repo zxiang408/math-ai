@@ -602,7 +602,28 @@
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.error || "AI 分析失败，请稍后再试。");
+        let message = data.error || "AI 分析失败，请稍后再试。";
+
+        if (data.upstream_status) {
+          message += "（HTTP " + data.upstream_status + "）";
+        }
+
+        if (data.upstream_code) {
+          message += "；错误代码：" + data.upstream_code;
+        }
+
+        if (data.upstream_metadata) {
+          try {
+            message += "；Provider 信息：" +
+              JSON.stringify(data.upstream_metadata);
+          } catch (_) {}
+        }
+
+        if (data.raw_preview) {
+          message += "；返回内容：" + data.raw_preview;
+        }
+
+        throw new Error(message);
       }
 
       renderResult(data);
