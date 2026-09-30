@@ -612,11 +612,11 @@
 
     <div class="notice">
 
-      当前是 V0.9.3。
+      当前是 V0.9.4。
       <br>
       已接入 OpenRouter 免费模型路由，用于错题照片识别与 AI 分析。
       <br>
-      当前已支持基础错题库、知识点标准化统计、能力档案、复测、针对性训练，以及分步骤互动辅导；V0.9.3 新增训练证据到具体能力环节的自动判断。
+      当前已支持基础错题库、知识点标准化统计、能力档案、复测、针对性训练，以及分步骤互动辅导；V0.9.4 新增具体能力环节驱动选题，并修正训练会话独立标识。
 
     </div>
 
@@ -1484,6 +1484,90 @@
     };
   }
 
+  function getTrainingAbilityFocus(
+    point,
+    trainingHistory
+  ) {
+    const definitions =
+      getTrainingAbilityDefinitions(point);
+
+    if (!Array.isArray(definitions) || definitions.length === 0) {
+      return null;
+    }
+
+    const candidates = definitions
+      .map(function (definition, index) {
+        const result =
+          getTrainingEvidenceAbilityState(
+            point,
+            definition.key,
+            trainingHistory
+          );
+
+        if (result.sessions === 0) {
+          return null;
+        }
+
+        // 已经形成连续3轮首次独立正确证据的小环节，暂时不再作为主训练目标。
+        if (result.state === "mastered") {
+          return null;
+        }
+
+        const independentRate =
+          result.sessions > 0
+            ? result.independentPasses / result.sessions
+            : 0;
+
+        let score = 0;
+
+        if (result.state === "prompted") {
+          score += 1000;
+        } else if (result.state === "forming") {
+          score += 500;
+        }
+
+        score +=
+          (1 - independentRate) * 300;
+
+        score +=
+          result.promptedSessions * 40;
+
+        score -= index;
+
+        return {
+          key: definition.key,
+          label: definition.label,
+          state: result.state,
+          stateText: result.stateText,
+          score: score,
+          sessions: result.sessions,
+          independentPasses:
+            result.independentPasses,
+          promptedSessions:
+            result.promptedSessions
+        };
+      })
+      .filter(Boolean)
+      .sort(function (a, b) {
+        if (a.score !== b.score) {
+          return b.score - a.score;
+        }
+
+        if (a.sessions !== b.sessions) {
+          return a.sessions - b.sessions;
+        }
+
+        return a.key.localeCompare(
+          b.key,
+          "zh-CN"
+        );
+      });
+
+    return candidates.length > 0
+      ? candidates[0]
+      : null;
+  }
+
   function getTrainingFocus(point, history, state) {
     const matching = history
       .filter(function (item) {
@@ -1502,82 +1586,98 @@
       ? standardizeErrorType(latest.error_type)
       : "无法判断";
 
+    const trainingHistory =
+      loadTrainingHistory();
+
+    const abilityFocus =
+      getTrainingAbilityFocus(
+        point,
+        trainingHistory
+      );
+
     const evidenceFocus =
       getTrainingEvidenceFocus(point);
 
-    if (state === "unstable") {
+    const selectedFocus =
+      abilityFocus || evidenceFocus;
+
+    function baseFocus(title, reason) {
       return {
-        title: "稳定性变式训练",
-        reason: "这个知识点最近一次已经出现复测错误，本轮重点检查能否把方法迁移到新题。",
+        title: title,
+        reason: reason,
         errorType: errorType,
         evidenceKey:
-          evidenceFocus?.key || null,
+          selectedFocus?.key || null,
         evidenceLabel:
-          evidenceFocus?.label || "",
+          selectedFocus?.label || "",
         evidence:
-          evidenceFocus
+          selectedFocus || null,
+        abilityState:
+          abilityFocus?.state || null,
+        abilityStateText:
+          abilityFocus?.stateText || ""
       };
+    }
+
+    if (state === "unstable") {
+      return baseFocus(
+        "稳定性变式训练",
+        abilityFocus
+          ? "先针对目前最不稳定的“" +
+            abilityFocus.label +
+            "”做新题，再观察能否独立迁移。"
+          : "这个知识点最近一次已经出现复测错误，本轮重点检查能否把方法迁移到新题。"
+      );
     }
 
     if (state === "recovering") {
-      return {
-        title: "恢复巩固训练",
-        reason: "这个知识点正在恢复中，先做一道熟悉结构的题，再进入间隔复测。",
-        errorType: errorType,
-        evidenceKey:
-          evidenceFocus?.key || null,
-        evidenceLabel:
-          evidenceFocus?.label || "",
-        evidence:
-          evidenceFocus
-      };
+      return baseFocus(
+        "恢复巩固训练",
+        abilityFocus
+          ? "这个知识点正在恢复中，本轮优先巩固“" +
+            abilityFocus.label +
+            "”，再进入间隔复测。"
+          : "这个知识点正在恢复中，先做一道熟悉结构的题，再进入间隔复测。"
+      );
     }
 
-    if (evidenceFocus) {
-      if (
-        evidenceFocus.key ===
-        "overall_independent_answer"
-      ) {
-        return {
-          title: "独立迁移训练",
-          reason:
-            "训练记录显示整题独立作答仍不稳定，下一道题会保留核心方法，同时改变数字或问法，检查孩子能否独立迁移。",
-          errorType: errorType,
-          evidenceKey: evidenceFocus.key,
-          evidenceLabel: evidenceFocus.label,
-          evidence: evidenceFocus
-        };
+    if (abilityFocus) {
+      if (abilityFocus.state === "prompted") {
+        return baseFocus(
+          "核心步骤强化训练",
+          "最近训练显示“" +
+            abilityFocus.label +
+            "”仍需要提示或拆小；下一道题将继续围绕这个具体环节，但更换数字或问法。"
+        );
       }
 
-      return {
-        title: "核心步骤强化训练",
-        reason:
-          "训练记录显示“" +
-          evidenceFocus.label +
-          "”是目前较容易出错的环节（" +
-          evidenceFocus.failures +
-          "次错误 / " +
-          evidenceFocus.attempts +
-          "次尝试），下一道题会继续围绕这一环节，但改变数字或问法。",
-        errorType: errorType,
-        evidenceKey: evidenceFocus.key,
-        evidenceLabel: evidenceFocus.label,
-        evidence: evidenceFocus
-      };
+      return baseFocus(
+        "核心步骤强化训练",
+        "目前“" +
+          abilityFocus.label +
+          "”已经有正确证据，但独立稳定性还不够；下一道题继续验证这个具体环节。"
+      );
+    }
+
+    if (
+      evidenceFocus &&
+      evidenceFocus.key ===
+        "overall_independent_answer"
+    ) {
+      return baseFocus(
+        "独立迁移训练",
+        "训练记录显示整题独立作答仍不稳定，下一道题会保留核心方法，同时改变数字或问法。"
+      );
     }
 
     if (
       errorType === "概念理解错误" ||
       errorType === "方法/步骤错误"
     ) {
-      return {
-        title: "概念与方法训练",
-        reason: "根据历史错误，这次训练优先检查概念/方法是否真正理解。",
-        errorType: errorType,
-        evidenceKey: null,
-        evidenceLabel: "",
-        evidence: null
-      };
+      return baseFocus(
+        "概念与方法训练",
+        "根据历史错误，这次训练优先检查概念/方法是否真正理解。"
+      );
     }
 
     if (
@@ -1585,24 +1685,16 @@
       errorType === "抄写/书写错误" ||
       errorType === "粗心/注意力错误"
     ) {
-      return {
-        title: "易错点巩固训练",
-        reason: "根据历史错误，这次训练重点检查计算与书写准确性。",
-        errorType: errorType,
-        evidenceKey: null,
-        evidenceLabel: "",
-        evidence: null
-      };
+      return baseFocus(
+        "易错点巩固训练",
+        "根据历史错误，这次训练重点检查计算与书写准确性。"
+      );
     }
 
-    return {
-      title: "基础巩固训练",
-      reason: "先用一道同知识点新题检查基础掌握情况。",
-      errorType: errorType,
-      evidenceKey: null,
-      evidenceLabel: "",
-      evidence: null
-    };
+    return baseFocus(
+      "基础巩固训练",
+      "先用一道同知识点新题检查基础掌握情况。"
+    );
   }
 
   function generateTargetedTraining(point, focus, sessionIndex) {
@@ -1730,6 +1822,40 @@
             "份，一共" + (multiple + 1) +
             "份，所以较小的数是" + sum + "÷" +
             (multiple + 1) + "=" + small + "。"
+        };
+      }
+
+      if (
+        evidenceKey === "total_parts"
+      ) {
+        return {
+          question:
+            "甲数是乙数的" + multiple +
+            "倍。如果甲、乙两数的和是" + sum +
+            "，两个数一共可以看成多少份？然后求乙数。",
+          correct_answer: String(small),
+          explanation:
+            "乙数看成1份，甲数是" + multiple +
+            "份，因此两个数一共" + (multiple + 1) +
+            "份；乙数为" + sum + "÷" +
+            (multiple + 1) + "=" + small + "。"
+        };
+      }
+
+      if (
+        evidenceKey === "unit_value"
+      ) {
+        return {
+          question:
+            "甲数是乙数的" + multiple +
+            "倍，甲、乙两数的和是" + sum +
+            "。先求1份是多少，乙数是多少？",
+          correct_answer: String(small),
+          explanation:
+            "先确定总份数：" + (multiple + 1) +
+            "份；再用总和" + sum + "÷" +
+            (multiple + 1) + "=" + small +
+            "，得到1份，也就是乙数。"
         };
       }
 
@@ -2097,6 +2223,8 @@
     }
 
     activeTraining = {
+      training_session_id:
+        createTrainingSessionId(),
       knowledge_point: point,
       focus: focus,
       question: training.question,
@@ -2121,6 +2249,11 @@
       (
         focus.evidenceLabel
           ? " ｜ 重点：" + focus.evidenceLabel
+          : ""
+      ) +
+      (
+        focus.abilityStateText
+          ? " ｜ 当前：" + focus.abilityStateText
           : ""
       ) +
       " ｜ " + focus.reason +
@@ -2177,6 +2310,15 @@
       console.error("保存训练记录失败：", error);
       return false;
     }
+  }
+
+  function createTrainingSessionId() {
+    return (
+      "ts-" +
+      String(Date.now()) +
+      "-" +
+      Math.random().toString(36).slice(2, 10)
+    );
   }
 
   let activeTraining = null;
@@ -2517,6 +2659,8 @@
         true,
       attempt_type:
         "training_completed",
+      training_session_id:
+        activeTraining.training_session_id,
       session_index:
         activeTraining.sessionIndex
     });
@@ -2574,6 +2718,8 @@
         activeTraining.attemptCount,
       attempt_type:
         "initial_answer",
+      training_session_id:
+        activeTraining.training_session_id,
       evidence_key:
         "overall_independent_answer",
       evidence_label:
@@ -2988,6 +3134,8 @@
         passed,
       attempt_type:
         "guided_step",
+      training_session_id:
+        activeTraining.training_session_id,
       step_number:
         index + 1,
       step_attempt_number:
@@ -3498,18 +3646,16 @@
 
     records.forEach(function (item, index) {
       const sessionPart =
-        item.session_index !== undefined &&
-        item.session_index !== null &&
-        String(item.session_index) !== ""
-          ? "session:" + String(item.session_index)
-          : "question:" +
-            normalizeTrainingQuestion(
-              item.question || ""
-            );
+        item.training_session_id
+          ? "session:" + String(item.training_session_id)
+          : item.question
+            ? "question:" +
+              normalizeTrainingQuestion(
+                item.question || ""
+              )
+            : "record:" + index;
 
-      const key =
-        sessionPart ||
-        ("record:" + index);
+      const key = sessionPart || ("record:" + index);
 
       if (!sessions[key]) {
         sessions[key] = {
