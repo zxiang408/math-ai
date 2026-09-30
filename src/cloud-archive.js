@@ -28,13 +28,20 @@ function getSupabaseConfig(env) {
 }
 
 function jsonRequestHeaders(key, extra = {}) {
-  return {
+  const headers = {
     apikey: key,
-    Authorization: "Bearer " + key,
     "Content-Type": "application/json",
     Accept: "application/json",
     ...extra
   };
+
+  // Supabase's new sb_secret_* keys must be sent via the apikey
+  // header only. Legacy service_role JWTs still use the Bearer header.
+  if (!key.startsWith("sb_secret_")) {
+    headers.Authorization = "Bearer " + key;
+  }
+
+  return headers;
 }
 
 async function supabaseFetch(env, path, init = {}) {
