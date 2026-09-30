@@ -3085,6 +3085,10 @@
       return "overall_independent_answer";
     }
 
+    if (attempt && attempt.attempt_type === "training_completed") {
+      return "training_completed";
+    }
+
     const point = String(attempt && attempt.knowledge_point || "");
     const meta = getTrainingEvidenceMeta(
       point,
@@ -3100,6 +3104,10 @@
 
     if (attempt && attempt.attempt_type === "initial_answer") {
       return "整体独立作答";
+    }
+
+    if (attempt && attempt.attempt_type === "training_completed") {
+      return "训练完成";
     }
 
     const meta = getTrainingEvidenceMeta(
