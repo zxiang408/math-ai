@@ -520,7 +520,7 @@
 
     <div class="notice">
 
-      当前是 V0.6.3。
+      当前是 V0.6.4。
       <br>
       已接入 OpenRouter 免费模型路由，用于错题照片识别与 AI 分析。
       <br>
@@ -653,9 +653,9 @@
   </div>
 
   <div class="footer">
-    小学数学 AI · V0.6.3
+    小学数学 AI · V0.6.4
     <br>
-    <span id="appVersion">程序版本：V0.6.3</span>
+    <span id="appVersion">程序版本：V0.6.4</span>
   </div>
 
 </div>
@@ -1664,7 +1664,9 @@
         training
       ),
       currentStep: 0,
-      attemptCount: 0
+      attemptCount: 0,
+      stepWrongCounts: {},
+      stepMode: "normal"
     };
 
     trainingCard.style.display = "block";
@@ -2243,6 +2245,107 @@
     return "这一步还不正确。先回到上面的提示，只解决当前这一步，不要急着做后面的计算。";
   }
 
+  function getSimplifiedTrainingStep(
+    point,
+    index,
+    training
+  ) {
+    if (point === "数与代数 / 倍数关系") {
+      const q = String(training.question || "");
+      const multipleMatch = q.match(/(\d+)倍/);
+      const sumMatch = q.match(/和是(\d+)/);
+      const multiple = multipleMatch ? Number(multipleMatch[1]) : null;
+      const sum = sumMatch ? Number(sumMatch[1]) : null;
+
+      if (multiple !== null && sum !== null) {
+        if (index === 0) {
+          return {
+            prompt:
+              "我们把较小的数看成1份。现在把“" +
+              multiple +
+              "倍”想成“" +
+              multiple +
+              "个1份”。一共有几个1份？",
+            accepted: [String(multiple)]
+          };
+        }
+
+        if (index === 1) {
+          return {
+            prompt:
+              "刚才找到较大数是" +
+              multiple +
+              "份。现在把较小数的1份也加进去：1+" +
+              multiple +
+              "等于多少？",
+            accepted: [String(multiple + 1)]
+          };
+        }
+
+        if (index === 2) {
+          return {
+            prompt:
+              "最后只做一个除法：把" +
+              sum +
+              "平均分成" +
+              (multiple + 1) +
+              "份，每1份是多少？",
+            accepted: [
+              String(Number(training.correct_answer))
+            ]
+          };
+        }
+      }
+    }
+
+    if (point === "图形与几何 / 正方形面积") {
+      if (index === 0) {
+        return {
+          prompt:
+            "先只看“扩大2倍”。2倍就是原来的几个2？填写2。",
+          accepted: ["2"]
+        };
+      }
+
+      if (index === 1) {
+        return {
+          prompt:
+            "面积有两个边长相乘，所以把两个2写成算式：2×2。等于多少？",
+          accepted: ["4", "4倍"]
+        };
+      }
+    }
+
+    if (point === "数与代数 / 积的变化规律") {
+      const q = String(training.question || "");
+      const factorMatch = q.match(/扩大(\d+)倍/);
+      const factor = factorMatch ? String(Number(factorMatch[1])) : null;
+
+      if (factor && index === 0) {
+        return {
+          prompt:
+            "“扩大" + factor +
+            "倍”就是原来的" + factor + "倍。先填写这个变化倍数。",
+          accepted: [factor, factor + "倍"]
+        };
+      }
+
+      if (factor && index === 1) {
+        return {
+          prompt:
+            "把两个因数的变化一起看。一个变大" + factor +
+            "倍，另一个按题目变化。现在判断最后是“变大”“变小”还是“不变”。",
+          accepted:
+            String(training.correct_answer || "").includes("不变")
+              ? ["不变", "1倍"]
+              : [String(training.correct_answer || "").replace(/\s+/g, "")]
+        };
+      }
+    }
+
+    return null;
+  }
+
   function showCurrentTrainingStep() {
     if (!activeTraining) return;
 
@@ -2256,12 +2359,38 @@
       return;
     }
 
-    const step = steps[index];
+    let step = steps[index];
+
+    const wrongCount =
+      activeTraining.stepWrongCounts[index] || 0;
+
+    if (wrongCount >= 2) {
+      const simplified =
+        getSimplifiedTrainingStep(
+          activeTraining.knowledge_point,
+          index,
+          activeTraining
+        );
+
+      if (simplified) {
+        step = simplified;
+        activeTraining.stepMode = "simplified";
+      }
+    } else {
+      activeTraining.stepMode = "normal";
+    }
+
+    activeTraining.currentDisplayedStep = step;
 
     trainingHint.style.display = "block";
     trainingHintText.textContent =
       step.prompt ||
       ("第" + (index + 1) + "步，请填写你的答案。");
+
+    if (wrongCount >= 2 && activeTraining.stepMode === "simplified") {
+      trainingStatus.textContent =
+        "这一步我们再拆小一点，请先完成这个更简单的问题。";
+    }
 
     trainingStepAnswer.value = "";
     trainingStepAnswer.disabled = false;
@@ -2307,11 +2436,15 @@
       ? activeTraining.steps
       : [];
 
-    const step = steps[index];
-    if (!step) {
+    const baseStep = steps[index];
+    if (!baseStep) {
       completeTrainingAfterSteps();
       return;
     }
+
+    const step =
+      activeTraining.currentDisplayedStep ||
+      baseStep;
 
     const studentAnswer =
       trainingStepAnswer.value.trim();
@@ -2354,9 +2487,14 @@
     });
 
     if (!passed) {
+      activeTraining.stepWrongCounts[index] =
+        (activeTraining.stepWrongCounts[index] || 0) + 1;
+
       trainingStepResult.style.display = "block";
       trainingStepResult.textContent =
-        "❌ 这一步还不对。先别看后面的步骤。";
+        activeTraining.stepWrongCounts[index] >= 2
+          ? "❌ 这一步还不对。我们把它再拆小一点。"
+          : "❌ 这一步还不对。先别看后面的步骤。";
 
       trainingAdaptiveFeedback.style.display = "block";
       trainingAdaptiveFeedback.textContent =
@@ -2368,8 +2506,25 @@
           activeTraining
         );
 
-      trainingStatus.textContent =
-        "答对当前这一步后，才能进入下一步。";
+      if (activeTraining.stepWrongCounts[index] >= 2) {
+        const simplified =
+          getSimplifiedTrainingStep(
+            activeTraining.knowledge_point,
+            index,
+            activeTraining
+          );
+
+        if (simplified) {
+          trainingHintText.textContent =
+            simplified.prompt;
+          trainingStatus.textContent =
+            "你已经连续两次没有答对这一小步，我们把问题拆得更简单一些。";
+        }
+      } else {
+        trainingStatus.textContent =
+          "答对当前这一步后，才能进入下一步。";
+      }
+
       trainingStepAnswer.select();
       return;
     }
@@ -2380,6 +2535,7 @@
     trainingAdaptiveFeedback.style.display = "none";
     trainingAdaptiveFeedback.textContent = "";
 
+    activeTraining.stepWrongCounts[index] = 0;
     activeTraining.currentStep = index + 1;
 
     if (activeTraining.currentStep >= steps.length) {
