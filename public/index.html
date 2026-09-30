@@ -2671,7 +2671,8 @@
 
           if (
             state.state === "observed" ||
-            state.state === "mastered"
+            state.state === "mastered" ||
+            state.state === "initial_mastery"
           ) {
             return null;
           }
@@ -2739,11 +2740,12 @@
       };
     }
 
-    // 只有当前目标本身已经进入较稳定阶段时，才不轻易向前置知识转移。
-    // “未掌握/学习中”仍允许检查前置依赖，因为这正是需要排查根因的阶段。
+    // 只有目标本身存在明确的“未掌握/学习中/掌握不稳定”证据时，
+    // 才允许回溯前置知识；“待观察/初步掌握/已掌握/恢复中”不主动改道。
     if (
-      currentState.state === "mastered" ||
-      currentState.state === "recovering"
+      currentState.state !== "not_mastered" &&
+      currentState.state !== "learning" &&
+      currentState.state !== "unstable"
     ) {
       return {
         targetPoint: point,
