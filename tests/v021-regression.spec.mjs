@@ -78,7 +78,7 @@ try {
     contract: window.MathAILearningModel?.getLearningModelContract()
   }));
   assert.equal(api.hasModelApi, true, "统一学习模型 API 未暴露");
-  assert.equal(api.contract?.schema_version, "unified-v1");
+  assert.equal(api.contract?.schema_version, "V0.17.0");
 
   const t0 = Date.now() - 10 * 86400000;
 
@@ -158,7 +158,7 @@ try {
     training: trainingRecords("large_number_parts", "倍数 → 份数", 3, t0 + 3600000)
   });
   await page.reload({ waitUntil: "domcontentloaded" });
-  await page.getByRole("button", { name: "🧠 智能安排训练" }).click();
+  await page.locator("#smartTrainingButton").click();
   await page.waitForTimeout(50);
   const firstUnlockedFocus = await page.locator("#trainingFocus").textContent();
   assert.match(firstUnlockedFocus || "", /微技能：总份数/, "第一个微技能掌握后没有自动推进到总份数");
