@@ -102,14 +102,90 @@ function extractJson(value) {
   return null;
 }
 
+const KNOWLEDGE_POINT_ALIASES = [
+  {
+    canonical: "图形与几何 / 正方形面积",
+    aliases: ["正方形的面积公式", "正方形面积公式", "正方形面积"],
+  },
+  {
+    canonical: "图形与几何 / 长方形面积",
+    aliases: ["长方形的面积公式", "长方形面积公式", "长方形面积"],
+  },
+  {
+    canonical: "数与代数 / 积的变化规律",
+    aliases: ["积的变化规律", "乘积的变化规律", "积的倍数变化"],
+  },
+  {
+    canonical: "数与代数 / 倍数关系",
+    aliases: ["倍数关系", "倍数"],
+  },
+  {
+    canonical: "数与代数 / 分数",
+    aliases: ["分数", "分数概念", "分数的意义"],
+  },
+  {
+    canonical: "数与代数 / 小数",
+    aliases: ["小数", "小数概念", "小数的意义"],
+  },
+  {
+    canonical: "数与代数 / 四则运算",
+    aliases: ["四则运算", "加减乘除", "混合运算"],
+  },
+  {
+    canonical: "数与代数 / 运算律",
+    aliases: ["运算律", "交换律", "结合律", "分配律"],
+  },
+  {
+    canonical: "数与代数 / 比与比例",
+    aliases: ["比与比例", "比例", "比的意义"],
+  },
+  {
+    canonical: "统计与概率 / 统计",
+    aliases: ["统计", "统计图", "平均数"],
+  },
+];
+
+function standardizeKnowledgePoint(point) {
+  const text = String(point ?? "")
+    .trim()
+    .replace(/\s+/g, "");
+
+  if (!text) return "";
+
+  for (const item of KNOWLEDGE_POINT_ALIASES) {
+    if (
+      item.aliases.some(function (alias) {
+        return text.includes(alias.replace(/\s+/g, ""));
+      })
+    ) {
+      return item.canonical;
+    }
+  }
+
+  return "待归类 / " + String(point).trim();
+}
+
+function standardizeKnowledgePoints(points) {
+  if (!Array.isArray(points)) return [];
+
+  const result = [];
+
+  points.slice(0, 8).forEach(function (point) {
+    const standardized = standardizeKnowledgePoint(point);
+    if (standardized && !result.includes(standardized)) {
+      result.push(standardized);
+    }
+  });
+
+  return result;
+}
+
 function normalizeResult(result) {
   return {
     question: String(result?.question ?? "").trim(),
     student_answer: String(result?.student_answer ?? "").trim(),
     correct_answer: String(result?.correct_answer ?? "").trim(),
-    knowledge_points: Array.isArray(result?.knowledge_points)
-      ? result.knowledge_points.map(String).filter(Boolean).slice(0, 8)
-      : [],
+    knowledge_points: standardizeKnowledgePoints(result?.knowledge_points),
     error_type: Array.isArray(result?.error_type)
       ? result.error_type.map(String).filter(Boolean).join("、").trim()
       : String(result?.error_type ?? "").trim(),
@@ -178,7 +254,18 @@ async function analyzeImage(request, env) {
 1. 识别题目。
 2. 识别孩子写出的答案；如果照片看不清，明确写“无法确认”。
 3. 给出正确答案；计算时自行核验。
-4. 判断涉及的主要小学数学知识点。
+4. 判断涉及的主要小学数学知识点。知识点名称尽量使用下面的标准名称；若无法匹配，可返回最接近的自然语言名称，程序会继续归类。
+标准知识点包括：
+- 图形与几何 / 正方形面积
+- 图形与几何 / 长方形面积
+- 数与代数 / 积的变化规律
+- 数与代数 / 倍数关系
+- 数与代数 / 分数
+- 数与代数 / 小数
+- 数与代数 / 四则运算
+- 数与代数 / 运算律
+- 数与代数 / 比与比例
+- 统计与概率 / 统计
 5. 判断错误类型，例如“计算错误”“概念理解错误”“审题错误”“步骤错误”“答案抄写错误”“无法判断”等。
 6. 用适合家长阅读的中文简要说明为什么错、应该重点检查什么。
 7. 如果图片无法可靠识别，请把 unclear 设为 true，并在 analysis 中说明原因。
