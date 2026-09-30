@@ -110,11 +110,38 @@ try {
     );
   }, { mistake: localMistake });
 
+  const pageErrors = [];
+  const requests = [];
+  page.on("pageerror", error => pageErrors.push(String(error && error.stack ? error.stack : error)));
+  page.on("request", request => {
+    if (request.url().includes("/api/sync/")) {
+      requests.push(request.method() + " " + request.url());
+    }
+  });
+
   await page.goto(BASE_URL, { waitUntil: "domcontentloaded" });
 
-  await page.waitForFunction(() =>
-    (document.getElementById("cloudSyncStatus")?.textContent || "")
-      .includes("云端学习档案已连接")
+  await page.waitForTimeout(1500);
+
+  const initialSyncState = await page.evaluate(() => ({
+    status: document.getElementById("cloudSyncStatus")?.textContent || "",
+    mistakes: JSON.parse(
+      localStorage.getItem("math-ai-v0.2-mistake-history") || "[]"
+    ).length,
+    retests: JSON.parse(
+      localStorage.getItem("math-ai-v0.4-retest-history") || "[]"
+    ).length
+  }));
+
+  assert.match(
+    initialSyncState.status,
+    /云端学习档案已连接|云端档案已同步/,
+    "云端初始化没有完成。状态=" +
+      JSON.stringify(initialSyncState) +
+      " pageErrors=" +
+      JSON.stringify(pageErrors) +
+      " requests=" +
+      JSON.stringify(requests)
   );
 
   const mergedCounts = await page.evaluate(() => ({
