@@ -1657,32 +1657,6 @@ function syncPreflight(request) {
   });
 }
 
-function validateSyncAccess(request, env) {
-  const expected = String(
-    env?.MATH_AI_SYNC_ACCESS_TOKEN || ""
-  ).trim();
-
-  if (!expected) {
-    return null;
-  }
-
-  const actual =
-    request.headers.get("X-Math-AI-Sync-Token") || "";
-
-  if (actual !== expected) {
-    return jsonResponse(
-      {
-        error: "云端学习档案访问被拒绝。",
-        code: "SYNC_ACCESS_DENIED"
-      },
-      401,
-      request
-    );
-  }
-
-  return null;
-}
-
 async function syncStatus(request, env) {
   if (request.method === "OPTIONS") {
     return syncPreflight(request);
@@ -1694,11 +1668,6 @@ async function syncStatus(request, env) {
       405,
       request
     );
-  }
-
-  const denied = validateSyncAccess(request, env);
-  if (denied) {
-    return denied;
   }
 
   try {
@@ -1737,11 +1706,6 @@ async function syncPush(request, env) {
       405,
       request
     );
-  }
-
-  const denied = validateSyncAccess(request, env);
-  if (denied) {
-    return denied;
   }
 
   let body;
@@ -1789,11 +1753,6 @@ async function syncPull(request, env) {
       405,
       request
     );
-  }
-
-  const denied = validateSyncAccess(request, env);
-  if (denied) {
-    return denied;
   }
 
   try {
