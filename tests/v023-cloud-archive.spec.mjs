@@ -95,7 +95,7 @@ try {
     assert.equal(data.learner_id, "child-1");
     assert.match(calls[0].url, /math_ai_learning_events/);
     assert.equal(calls[0].headers.apikey, "sb_secret_test");
-    assert.equal(calls[0].headers.Authorization, "Bearer sb_secret_test");
+    assert.equal(calls[0].headers.Authorization, undefined);
   }
 
   // 3) Push：先 upsert learner，再批量 upsert learning_events。
