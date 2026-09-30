@@ -287,6 +287,36 @@ try {
 
   console.log("V0.22 queue diagnostic:", JSON.stringify(queueDiag));
 
+  const renderDiag = await page.evaluate(() => {
+    try {
+      if (typeof window.renderRetentionQueue !== "function") {
+        return { type: typeof window.renderRetentionQueue, summary: document.getElementById("retentionQueueSummary")?.textContent || null };
+      }
+      window.renderRetentionQueue(JSON.parse(localStorage.getItem("math-ai-v0.2-mistake-history") || "[]"));
+      return {
+        ok: true,
+        summary: document.getElementById("retentionQueueSummary")?.textContent || null,
+        itemCount: document.querySelectorAll("#retentionQueueList .retention-queue-item").length
+      };
+    } catch (e) {
+      return { ok: false, error: String(e && e.stack ? e.stack : e) };
+    }
+  });
+
+  console.log("V0.22 render diagnostic:", JSON.stringify(renderDiag));
+
+  assert.equal(
+    renderDiag.ok,
+    true,
+    "保持复习 UI 调用异常: " + JSON.stringify(renderDiag)
+  );
+
+  assert.match(
+    renderDiag.summary || "",
+    /需要保持复习/,
+    "直接调用保持复习渲染仍未更新页面: " + JSON.stringify(renderDiag)
+  );
+
   assert.equal(
     queueDiag.error,
     null,
