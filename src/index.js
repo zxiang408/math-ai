@@ -213,7 +213,11 @@ confidence 为 0 到 1 之间的小数，表示你对整道题识别与分析的
           "X-Title": "小学数学 AI",
         },
         body: JSON.stringify({
-          model: "qwen/qwen3.8-27b:free",
+          models: [
+            "qwen/qwen3.8-27b:free",
+            "google/gemma-4-31b-it:free",
+            "google/gemma-4-26b-a4b-it:free",
+          ],
           temperature: 0.2,
           max_tokens: 1800,
           reasoning: { enabled: false },
@@ -341,7 +345,9 @@ confidence 为 0 到 1 之间的小数，表示你对整道题识别与分析的
   if (toolCall?.function?.arguments) {
     try {
       const parsedArgs = JSON.parse(toolCall.function.arguments);
-      return jsonResponse(normalizeResult(parsedArgs), 200, request);
+      const normalized = normalizeResult(parsedArgs);
+      normalized.model = upstreamBody?.model ?? null;
+      return jsonResponse(normalized, 200, request);
     } catch (_) {
       return jsonResponse(
         {
