@@ -511,7 +511,7 @@
 
     <div class="notice">
 
-      当前是 V0.6.1。
+      当前是 V0.6.2。
       <br>
       已接入 OpenRouter 免费模型路由，用于错题照片识别与 AI 分析。
       <br>
@@ -568,6 +568,22 @@
     <div class="training-hint" id="trainingHint">
       <div class="training-hint-title">💡 一步一步想</div>
       <div id="trainingHintText"></div>
+
+      <input
+        class="retest-answer-input"
+        id="trainingStepAnswer"
+        type="text"
+        placeholder="请填写这一步的答案"
+        autocomplete="off"
+      >
+
+      <div class="button-row">
+        <button class="primary" id="submitTrainingStepButton">
+          提交这一步
+        </button>
+      </div>
+
+      <div class="retest-result" id="trainingStepResult" style="display: none;"></div>
     </div>
   </div>
 
@@ -622,9 +638,9 @@
   </div>
 
   <div class="footer">
-    小学数学 AI · V0.6.1
+    小学数学 AI · V0.6.2
     <br>
-    <span id="appVersion">程序版本：V0.6.1</span>
+    <span id="appVersion">程序版本：V0.6.2</span>
   </div>
 
 </div>
@@ -725,6 +741,15 @@
 
   const trainingHintText =
     document.getElementById("trainingHintText");
+
+  const trainingStepAnswer =
+    document.getElementById("trainingStepAnswer");
+
+  const submitTrainingStepButton =
+    document.getElementById("submitTrainingStepButton");
+
+  const trainingStepResult =
+    document.getElementById("trainingStepResult");
 
   const hintTrainingButton =
     document.getElementById("hintTrainingButton");
@@ -1414,75 +1439,182 @@
     return null;
   }
 
-  function getTrainingHints(point, focusTitle, question) {
+  function getTrainingSteps(point, focusTitle, training) {
     if (point === "数与代数 / 倍数关系") {
-      if (focusTitle === "概念与方法训练") {
+      const question = String(training.question || "");
+      const multipleMatch =
+        question.match(/(\d+)倍/);
+      const sumMatch =
+        question.match(/和是(\d+)/);
+
+      const multiple =
+        multipleMatch ? Number(multipleMatch[1]) : null;
+      const sum =
+        sumMatch ? Number(sumMatch[1]) : null;
+
+      if (
+        multiple !== null &&
+        sum !== null &&
+        focusTitle === "概念与方法训练"
+      ) {
         return [
-          "先不要算答案。把较小的数看成1份，想一想较大的数是几份。",
-          "两个数合起来一共有“1份 + 较大数对应的份数”，先求总份数。",
-          "用两个数的总和除以总份数，得到1份，这就是较小的数。"
+          {
+            prompt:
+              "第1步：较大的数是较小的数的几份？",
+            accepted: [String(multiple)]
+          },
+          {
+            prompt:
+              "第2步：两个数合起来一共有几份？",
+            accepted: [String(multiple + 1)]
+          },
+          {
+            prompt:
+              "第3步：用总和除以总份数，" +
+              sum + "÷" + (multiple + 1) + "等于多少？",
+            accepted: [
+              String(Number(training.correct_answer))
+            ]
+          }
         ];
       }
 
+      const correct = String(training.correct_answer || "");
       return [
-        "先找出题目中两个数之间的倍数关系，把它们都换成“份”的想法。",
-        "再根据题目给出的和或差，确定一份是多少。",
-        "最后再求题目要求的那个数。"
+        {
+          prompt: "第1步：先找出两个数之间的倍数关系，填写较大的数相当于几份？",
+          accepted: [String(multiple || "").trim()]
+        },
+        {
+          prompt: "第2步：根据题目的和或差，先算出总共需要几份。",
+          accepted: []
+        },
+        {
+          prompt: "第3步：算出题目要求的那个数。",
+          accepted: correct ? [correct.replace(/\s+/g, "")] : []
+        }
       ];
     }
 
     if (point === "图形与几何 / 正方形面积") {
       if (focusTitle === "概念与方法训练") {
         return [
-          "先回忆正方形的面积公式：面积和边长之间是什么关系？",
-          "边长扩大2倍时，面积中的两个“边长”都会扩大2倍。",
-          "所以要计算2×2，而不是只算一个2。"
+          {
+            prompt: "第1步：边长扩大2倍，那么面积公式中的两个边长各扩大几倍？",
+            accepted: ["2"]
+          },
+          {
+            prompt: "第2步：两个变化倍数要相乘。2×2等于多少？",
+            accepted: ["4", "4倍"]
+          }
         ];
       }
 
-      return [
-        "先写出对应的面积公式，再把题目给出的长度代进去。",
-        "如果边长发生变化，先确定新的边长或面积的变化倍数。",
-        "最后检查单位是否写成平方厘米等面积单位。"
-      ];
+      const question = String(training.question || "");
+      const sideMatch = question.match(/边长是(\d+)厘米/);
+      const side = sideMatch ? Number(sideMatch[1]) : null;
+      if (side !== null) {
+        const final = String(Number(training.correct_answer));
+        return [
+          {
+            prompt: "第1步：写出正方形面积公式：边长×边长。先填写原题中的边长。",
+            accepted: [String(side)]
+          },
+          {
+            prompt: "第2步：完成计算。",
+            accepted: [final]
+          }
+        ];
+      }
     }
 
     if (point === "数与代数 / 积的变化规律") {
-      return [
-        "先看清楚两个因数分别发生了什么变化。",
-        "一个因数不变、另一个扩大几倍时，积会跟着扩大几倍。",
-        "如果一个扩大、另一个缩小，还要比较两个变化是否互相抵消。"
-      ];
+      const question = String(training.question || "");
+      const factorMatch = question.match(/扩大(\d+)倍/);
+      const factor = factorMatch ? String(Number(factorMatch[1])) : null;
+
+      if (
+        focusTitle === "稳定性变式训练" &&
+        factor
+      ) {
+        return [
+          {
+            prompt: "第1步：一个因数扩大" + factor + "倍，这是乘积变化了几倍？",
+            accepted: [factor, factor + "倍"]
+          },
+          {
+            prompt: "第2步：另一个因数同时缩小" + factor + "倍，这两个变化合起来会怎样？",
+            accepted: ["不变", "1倍"]
+          }
+        ];
+      }
+
+      if (factor) {
+        return [
+          {
+            prompt: "第1步：不变的那个因数，变化了几倍？",
+            accepted: ["1", "1倍", "不变"]
+          },
+          {
+            prompt: "第2步：另一个因数扩大" + factor + "倍，所以积扩大多少倍？",
+            accepted: [factor, factor + "倍"]
+          }
+        ];
+      }
     }
 
     if (point === "数与代数 / 四则运算") {
-      return [
-        "先圈出乘法、除法和加减法，想一想应该先算哪一种。",
-        "先完成优先级高的运算，再进行后面的加减。",
-        "算完后再从头检查一遍运算顺序。"
-      ];
+      const q = String(training.question || "");
+      const match = q.match(/(\d+)－(\d+)×(\d+)/);
+      if (match) {
+        const a = Number(match[1]);
+        const b = Number(match[2]);
+        const d = Number(match[3]);
+        return [
+          {
+            prompt: "第1步：先计算乘法。" + b + "×" + d + "等于多少？",
+            accepted: [String(b * d)]
+          },
+          {
+            prompt: "第2步：再计算" + a + "－" + (b * d) + "，等于多少？",
+            accepted: [String(a - b * d)]
+          }
+        ];
+      }
     }
 
     if (point === "数与代数 / 小数") {
-      return [
-        "先观察小数点的位置，不要把整数部分和小数部分混在一起。",
-        "把小数点对齐，再进行计算。",
-        "最后检查结果的小数位数和大小是否合理。"
-      ];
-    }
-
-    if (point === "数与代数 / 比与比例") {
-      return [
-        "先找出比的两项之间的倍数关系。",
-        "当一项扩大或缩小时，另一项要按照相同的比例变化。",
-        "最后用题目给出的数检查结果是否符合原来的比。"
-      ];
+      const q = String(training.question || "");
+      const match = q.match(/(\d+\.\d+)－(\d+\.\d+)/);
+      if (match) {
+        const a = Number(match[1]);
+        const b = Number(match[2]);
+        return [
+          {
+            prompt: "第1步：先把两个小数的小数点对齐。小数点应该在同一列吗？",
+            accepted: ["是", "对", "应该"]
+          },
+          {
+            prompt: "第2步：完成相减计算，答案是多少？",
+            accepted: [String(Number(training.correct_answer))]
+          }
+        ];
+      }
     }
 
     return [
-      "先把题目中最重要的已知条件找出来。",
-      "想一想这个条件对应的知识点和公式是什么。",
-      "只做关键的一步，再根据这一步继续完成。"
+      {
+        prompt: "第1步：先找出这道题最重要的已知条件，并填写你认为最关键的数字或结果。",
+        accepted: []
+      },
+      {
+        prompt: "第2步：根据刚才的条件继续完成计算，填写下一步结果。",
+        accepted: []
+      },
+      {
+        prompt: "第3步：完成最后计算。",
+        accepted: [String(training.correct_answer || "").replace(/\s+/g, "")]
+      }
     ];
   }
 
@@ -1508,12 +1640,12 @@
       question: training.question,
       correct_answer: training.correct_answer,
       explanation: training.explanation || "",
-      hints: getTrainingHints(
+      steps: getTrainingSteps(
         point,
         focus.title,
-        training.question
+        training
       ),
-      hintIndex: 0,
+      currentStep: 0,
       attemptCount: 0
     };
 
@@ -1531,6 +1663,10 @@
     retryTrainingButton.style.display = "none";
     trainingHint.style.display = "none";
     trainingHintText.textContent = "";
+    trainingStepAnswer.value = "";
+    trainingStepResult.style.display = "none";
+    trainingStepResult.textContent = "";
+    submitTrainingStepButton.disabled = false;
     trainingResult.style.display = "none";
 
     trainingCard.scrollIntoView({
@@ -1902,14 +2038,15 @@
 
     if (passed === null) {
       trainingStatus.textContent =
-        "这道训练题需要进一步判断，请检查答案格式。";
+        "这道训练题需要填写一个明确的答案，请检查输入。";
+      trainingAnswer.focus();
       return;
     }
 
     activeTraining.attemptCount =
       (activeTraining.attemptCount || 0) + 1;
 
-    const attempt = {
+    saveTrainingAttempt({
       id:
         String(Date.now()) +
         "-" +
@@ -1930,11 +2067,9 @@
         passed,
       attempt_number:
         activeTraining.attemptCount,
-      hint_level:
-        activeTraining.hintIndex || 0
-    };
-
-    saveTrainingAttempt(attempt);
+      attempt_type:
+        "initial_answer"
+    });
 
     trainingResult.style.display = "block";
 
@@ -1949,59 +2084,210 @@
         "本次训练已完成；训练结果不会直接改变能力状态。";
 
       trainingHint.style.display = "none";
-      hintTrainingButton.style.display = "none";
-      retryTrainingButton.style.display = "none";
+      trainingStepResult.style.display = "none";
       trainingAnswer.disabled = true;
       submitTrainingButton.disabled = true;
       return;
     }
 
     trainingResult.textContent =
-      "❌ 这次还没有做对。先不公布答案，我们一步一步想。";
+      "❌ 这次还没有做对。我们不直接公布答案，从第1步开始一步一步解决。";
 
     trainingStatus.textContent =
-      "训练结果已记录；能力状态不会因为这次训练直接改变。";
+      "请完成第1步，答对后才会进入下一步。";
 
     trainingAnswer.disabled = true;
     submitTrainingButton.disabled = true;
 
-    trainingHint.style.display = "block";
+    activeTraining.currentStep = 0;
 
-    const hints = Array.isArray(activeTraining.hints)
-      ? activeTraining.hints
+    if (
+      !Array.isArray(activeTraining.steps) ||
+      activeTraining.steps.length === 0
+    ) {
+      trainingHint.style.display = "block";
+      trainingHintText.textContent =
+        "请回到题目，重新检查最重要的条件和计算步骤。";
+      retryTrainingButton.style.display = "inline-block";
+      return;
+    }
+
+    showCurrentTrainingStep();
+  }
+
+  function normalizeTrainingStepAnswer(value) {
+    return String(value || "")
+      .trim()
+      .replace(/\s+/g, "")
+      .replace(/。$/g, "");
+  }
+
+  function trainingStepAccepted(studentAnswer, step) {
+    const student = normalizeTrainingStepAnswer(studentAnswer);
+    if (!student) return false;
+
+    const accepted = Array.isArray(step.accepted)
+      ? step.accepted
       : [];
 
-    if (hints.length > 0) {
-      if ((activeTraining.hintIndex || 0) === 0) {
-        activeTraining.hintIndex = 1;
-        trainingHintText.textContent = hints[0];
-      } else {
-        trainingHintText.textContent =
-          hints[Math.min(
-            activeTraining.hintIndex - 1,
-            hints.length - 1
-          )];
-      }
+    return accepted.some(function (value) {
+      return normalizeTrainingStepAnswer(value) === student;
+    });
+  }
 
-      if (activeTraining.hintIndex < hints.length) {
-        hintTrainingButton.style.display = "inline-block";
-      } else {
-        hintTrainingButton.style.display = "none";
-        trainingStatus.textContent =
-          "关键思路已经提示出来了，再自己算一次。";
-      }
+  function showCurrentTrainingStep() {
+    if (!activeTraining) return;
 
-      retryTrainingButton.style.display = "inline-block";
-    } else {
-      trainingHintText.textContent =
-        "请回到题目，重新检查条件和计算步骤。";
-      retryTrainingButton.style.display = "inline-block";
+    const index = activeTraining.currentStep || 0;
+    const steps = Array.isArray(activeTraining.steps)
+      ? activeTraining.steps
+      : [];
+
+    if (index >= steps.length) {
+      completeTrainingAfterSteps();
+      return;
     }
+
+    const step = steps[index];
+
+    trainingHint.style.display = "block";
+    trainingHintText.textContent =
+      step.prompt ||
+      ("第" + (index + 1) + "步，请填写你的答案。");
+
+    trainingStepAnswer.value = "";
+    trainingStepAnswer.disabled = false;
+    submitTrainingStepButton.disabled = false;
+    trainingStepResult.style.display = "none";
+    trainingStepResult.textContent = "";
+
+    hintTrainingButton.style.display = "none";
+    retryTrainingButton.style.display = "none";
+
+    trainingStatus.textContent =
+      "第" + (index + 1) + "步：" +
+      "先独立填写，答对后才能继续。";
+
+    trainingStepAnswer.focus();
+  }
+
+  function completeTrainingAfterSteps() {
+    if (!activeTraining) return;
+
+    trainingStepAnswer.disabled = true;
+    submitTrainingStepButton.disabled = true;
+    trainingHint.style.display = "none";
+
+    trainingResult.style.display = "block";
+    trainingResult.textContent =
+      "✅ 太好了！你已经一步一步把这道题解决了。" +
+      (activeTraining.explanation
+        ? " 完整思路：" + activeTraining.explanation
+        : "");
+
+    trainingStatus.textContent =
+      "本次训练已完成；训练结果不会直接改变能力状态。";
+  }
+
+  function submitTrainingStep() {
+    if (!activeTraining) return;
+
+    const index = activeTraining.currentStep || 0;
+    const steps = Array.isArray(activeTraining.steps)
+      ? activeTraining.steps
+      : [];
+
+    const step = steps[index];
+    if (!step) {
+      completeTrainingAfterSteps();
+      return;
+    }
+
+    const studentAnswer =
+      trainingStepAnswer.value.trim();
+
+    if (!studentAnswer) {
+      trainingStepResult.style.display = "block";
+      trainingStepResult.textContent =
+        "请先填写这一步的答案。";
+      trainingStepAnswer.focus();
+      return;
+    }
+
+    const passed =
+      trainingStepAccepted(
+        studentAnswer,
+        step
+      );
+
+    saveTrainingAttempt({
+      id:
+        String(Date.now()) +
+        "-" +
+        Math.random().toString(36).slice(2, 8),
+      created_at:
+        new Date().toISOString(),
+      knowledge_point:
+        activeTraining.knowledge_point,
+      focus:
+        activeTraining.focus.title,
+      question:
+        activeTraining.question,
+      student_answer:
+        studentAnswer,
+      passed:
+        passed,
+      attempt_type:
+        "guided_step",
+      step_number:
+        index + 1
+    });
+
+    if (!passed) {
+      trainingStepResult.style.display = "block";
+      trainingStepResult.textContent =
+        "❌ 这一步还不对，再想一想。先别看后面的步骤。";
+      trainingStatus.textContent =
+        "答对当前这一步后，才能进入下一步。";
+      trainingStepAnswer.select();
+      return;
+    }
+
+    trainingStepResult.style.display = "block";
+    trainingStepResult.textContent =
+      "✅ 这一步正确！";
+
+    activeTraining.currentStep = index + 1;
+
+    if (activeTraining.currentStep >= steps.length) {
+      setTimeout(function () {
+        completeTrainingAfterSteps();
+      }, 150);
+      return;
+    }
+
+    setTimeout(function () {
+      showCurrentTrainingStep();
+    }, 150);
   }
 
   submitTrainingButton.addEventListener(
     "click",
     submitTraining
+  );
+
+  submitTrainingStepButton.addEventListener(
+    "click",
+    submitTrainingStep
+  );
+
+  trainingStepAnswer.addEventListener(
+    "keydown",
+    function (event) {
+      if (event.key === "Enter") {
+        submitTrainingStep();
+      }
+    }
   );
 
   hintTrainingButton.addEventListener(
@@ -2056,6 +2342,8 @@
       trainingHint.style.display = "none";
       hintTrainingButton.style.display = "none";
       retryTrainingButton.style.display = "none";
+      trainingStepAnswer.value = "";
+      trainingStepResult.style.display = "none";
     }
   );
 
