@@ -922,20 +922,22 @@
 
 
 
-<script type="module">
-  import {
+<script src="./math-engine-browser.js"></script>
+<script src="./learning-model-browser.js"></script>
+<script>
+  const {
     verifyMathAnswer,
     verifyAcceptedAnswer
-  } from "./math-engine.js";
+  } = window.MathAIMathEngine;
 
-  import {
+  const {
     buildUnifiedLearningModel,
     summarizeUnifiedLearningModel,
     LEARNING_MODEL_VERSION,
     deriveKnowledgePointState,
     deriveMicroSkillState,
     deriveReviewSchedule
-  } from "./learning-model.js";
+  } = window.MathAILearningModel;
 
 
   const uploadArea =
