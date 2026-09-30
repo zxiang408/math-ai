@@ -400,11 +400,11 @@
 
     <div class="notice">
 
-      当前是 V0.1。
+      当前是 V0.2。
       <br>
-      已接入 OpenRouter 免费模型路由，用于测试错题照片识别与 AI 分析。
+      已接入 OpenRouter 免费模型路由，用于错题照片识别与 AI 分析。
       <br>
-      后续再加入知识点库、针对性出题和分步骤引导。
+      当前已支持基础错题库；后续再加入知识点标准化、能力档案、针对性出题和分步骤引导。
 
     </div>
 
@@ -862,7 +862,7 @@
     points.forEach(function (point) {
       const tag = document.createElement("span");
       tag.className = "tag";
-      tag.textContent = point;
+      tag.textContent = point + " ";
       container.appendChild(tag);
     });
   }
