@@ -5681,30 +5681,26 @@
   }
 
 
-  function buildCurrentUnifiedLearningModel() {
+  function buildCurrentUnifiedLearningModel(snapshot) {
+    const data = snapshot || {
+      mistakes: loadHistory(),
+      retests: loadRetestHistory(),
+      training: loadTrainingHistory()
+    };
+
     return buildUnifiedLearningModel(
-      {
-        mistakes: loadHistory(),
-        retests: loadRetestHistory(),
-        training: loadTrainingHistory()
-      },
+      data,
       standardizeKnowledgePoint
     );
   }
 
-  function renderUnifiedLearningSummary() {
+  function renderUnifiedLearningSummary(snapshot) {
     if (!learningDataSummary) {
       return;
     }
 
-    const model = buildUnifiedLearningModel(
-      {
-        mistakes: loadHistory(),
-        retests: loadRetestHistory(),
-        training: loadTrainingHistory()
-      },
-      standardizeKnowledgePoint
-    );
+    const model =
+      buildCurrentUnifiedLearningModel(snapshot);
 
     const summary =
       summarizeUnifiedLearningModel(model);
@@ -5729,8 +5725,18 @@
   }
 
   function renderAbilityProfile(history) {
-    renderUnifiedLearningSummary();
-    renderSmartTrainingRecommendation(history);
+    const snapshot = {
+      mistakes: Array.isArray(history)
+        ? history
+        : loadHistory(),
+      retests: loadRetestHistory(),
+      training: loadTrainingHistory()
+    };
+
+    renderUnifiedLearningSummary(snapshot);
+    renderSmartTrainingRecommendation(
+      snapshot.mistakes
+    );
 
     const statsMap = {};
     const retestHistory = loadRetestHistory();
