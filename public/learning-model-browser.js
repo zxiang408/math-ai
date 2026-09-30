@@ -680,22 +680,40 @@ function deriveMicroSkillState(model, point, skillKey) {
   };
 }
 
+const RETENTION_SCHEDULE_VERSION = "V0.22.0";
+
 const DEFAULT_RETENTION_INTERVALS_DAYS = [
   3,
   7,
   14,
   30,
   60,
-  90
+  90,
+  180,
+  365
 ];
 
-function deriveReviewSchedule(
+function eventTimestamp(event) {
+  const value = new Date(event?.occurred_at || 0).getTime();
+  return Number.isNaN(value) ? null : value;
+}
+
+function deriveReviewScheduleAt(
   model,
   point,
   knowledgeState,
-  intervals =
-    DEFAULT_RETENTION_INTERVALS_DAYS
+  intervals = DEFAULT_RETENTION_INTERVALS_DAYS,
+  nowMs = Date.now()
 ) {
+  const safeIntervals =
+    Array.isArray(intervals) && intervals.length > 0
+      ? intervals
+          .filter(function (value) {
+            return Number.isFinite(Number(value)) && Number(value) > 0;
+          })
+          .map(Number)
+      : DEFAULT_RETENTION_INTERVALS_DAYS;
+
   const events = sortedEvents(model);
   const matching = events.filter(function (event) {
     return (
@@ -711,6 +729,13 @@ function deriveReviewSchedule(
     );
   });
 
+  const spacedFailures = matching.filter(function (event) {
+    return (
+      event.event_type === "spaced_retest_attempt" &&
+      eventFailed(event)
+    );
+  });
+
   const latestAttempt =
     matching.length > 0
       ? matching[matching.length - 1]
@@ -721,33 +746,79 @@ function deriveReviewSchedule(
       ? spacedPassed[spacedPassed.length - 1]
       : null;
 
+  const latestSpacedFailure =
+    spacedFailures.length > 0
+      ? spacedFailures[spacedFailures.length - 1]
+      : null;
+
+  const latestPassAt = eventTimestamp(latestSpacedPassed);
+  const latestFailureAt = eventTimestamp(latestSpacedFailure);
+
+  const retentionResetPending =
+    latestFailureAt !== null &&
+    (
+      latestPassAt === null ||
+      latestFailureAt > latestPassAt
+    );
+
   let dueAt = null;
   let intervalDays = null;
   let stage = 0;
+  let cyclePasses = 0;
+  let cycle = "initial";
 
-  if (latestSpacedPassed) {
-    stage = spacedPassed.length;
-    const nextIndex = Math.min(
-      stage,
-      intervals.length - 1
-    );
+  if (retentionResetPending) {
+    cycle = "reset";
+  } else if (latestSpacedPassed) {
+    const latestReset =
+      spacedFailures.length > 0
+        ? latestFailureAt
+        : null;
 
-    intervalDays = intervals[nextIndex];
+    const passesInCurrentCycle =
+      latestReset !== null
+        ? spacedPassed.filter(function (event) {
+            const timestamp = eventTimestamp(event);
+            return timestamp !== null && timestamp > latestReset;
+          })
+        : spacedPassed;
+
+    cyclePasses = passesInCurrentCycle.length;
+    cycle = latestReset !== null
+      ? "recovery"
+      : "initial";
+
+    const intervalIndex =
+      latestReset !== null
+        ? Math.min(
+            Math.max(cyclePasses - 1, 0),
+            safeIntervals.length - 1
+          )
+        : Math.min(
+            cyclePasses,
+            safeIntervals.length - 1
+          );
+
+    intervalDays = safeIntervals[intervalIndex];
 
     dueAt = new Date(
-      new Date(latestSpacedPassed.occurred_at).getTime() +
+      eventTimestamp(latestSpacedPassed) +
       intervalDays * 86400000
     ).toISOString();
+
+    stage = intervalIndex;
   } else if (
     knowledgeState?.state === "initial_mastery" &&
     latestAttempt &&
     eventPassed(latestAttempt)
   ) {
+    cycle = "initial";
+    cyclePasses = 0;
     stage = 0;
-    intervalDays = intervals[0];
+    intervalDays = safeIntervals[0];
 
     dueAt = new Date(
-      new Date(latestAttempt.occurred_at).getTime() +
+      eventTimestamp(latestAttempt) +
       intervalDays * 86400000
     ).toISOString();
   }
@@ -756,13 +827,11 @@ function deriveReviewSchedule(
     dueAt: dueAt,
     intervalDays: intervalDays,
     spacedPasses: spacedPassed.length,
-    spacedFailures: matching.filter(function (event) {
-      return (
-        event.event_type === "spaced_retest_attempt" &&
-        eventFailed(event)
-      );
-    }).length,
-    stage: stage
+    spacedFailures: spacedFailures.length,
+    stage: stage,
+    cycle: cycle,
+    cyclePasses: cyclePasses,
+    resetPending: retentionResetPending
   };
 
   if (
@@ -778,7 +847,27 @@ function deriveReviewSchedule(
     };
   }
 
-  if (!dueAt) {
+  if (retentionResetPending || !dueAt) {
+    return {
+      ...base,
+      state: "building",
+      stateText: retentionResetPending
+        ? "保持复习重启"
+        : "尚未进入长期保持",
+      daysUntilDue: null
+    };
+  }
+
+  const dueTimestamp = new Date(dueAt).getTime();
+  const daysUntilDue =
+    Number.isNaN(dueTimestamp)
+      ? null
+      : Math.ceil(
+          (dueTimestamp - Number(nowMs)) /
+          86400000
+        );
+
+  if (daysUntilDue === null) {
     return {
       ...base,
       state: "building",
@@ -787,15 +876,7 @@ function deriveReviewSchedule(
     };
   }
 
-  const daysUntilDue =
-    Math.ceil(
-      (new Date(dueAt).getTime() - Date.now()) /
-      86400000
-    );
-
-  if (
-    knowledgeState?.state === "recovering"
-  ) {
+  if (knowledgeState?.state === "recovering") {
     return {
       ...base,
       state: "recovering",
@@ -828,6 +909,85 @@ function deriveReviewSchedule(
     stateText: "遗忘风险",
     daysUntilDue: daysUntilDue
   };
+}
+
+function deriveReviewSchedule(
+  model,
+  point,
+  knowledgeState,
+  intervals = DEFAULT_RETENTION_INTERVALS_DAYS
+) {
+  return deriveReviewScheduleAt(
+    model,
+    point,
+    knowledgeState,
+    intervals,
+    Date.now()
+  );
+}
+
+function buildRetentionQueue(
+  model,
+  points,
+  nowMs = Date.now(),
+  intervals = DEFAULT_RETENTION_INTERVALS_DAYS
+) {
+  const pointList = Array.isArray(points)
+    ? [...new Set(
+        points
+          .map(function (point) {
+            return text(point);
+          })
+          .filter(Boolean)
+      )]
+    : [];
+
+  return pointList
+    .map(function (point) {
+      const abilityState =
+        deriveKnowledgePointState(model, point);
+      const review =
+        deriveReviewScheduleAt(
+          model,
+          point,
+          abilityState,
+          intervals,
+          nowMs
+        );
+
+      return {
+        knowledge_point: point,
+        ability_state: abilityState,
+        review_schedule: review
+      };
+    })
+    .filter(function (item) {
+      return (
+        item.review_schedule.state === "due" ||
+        item.review_schedule.state === "risk"
+      );
+    })
+    .sort(function (a, b) {
+      const riskOrder = {
+        risk: 0,
+        due: 1
+      };
+
+      const stateDiff =
+        (riskOrder[a.review_schedule.state] ?? 9) -
+        (riskOrder[b.review_schedule.state] ?? 9);
+
+      if (stateDiff !== 0) {
+        return stateDiff;
+      }
+
+      return new Date(
+        a.review_schedule.dueAt || 0
+      ).getTime() -
+      new Date(
+        b.review_schedule.dueAt || 0
+      ).getTime();
+    });
 }
 
 function deriveLearnerState(model, points) {
@@ -883,6 +1043,10 @@ window.MathAILearningModel = {
   deriveKnowledgePointState: deriveKnowledgePointState,
   deriveMicroSkillState: deriveMicroSkillState,
   deriveReviewSchedule: deriveReviewSchedule,
+  deriveReviewScheduleAt: deriveReviewScheduleAt,
+  buildRetentionQueue: buildRetentionQueue,
+  DEFAULT_RETENTION_INTERVALS_DAYS: DEFAULT_RETENTION_INTERVALS_DAYS,
+  RETENTION_SCHEDULE_VERSION: RETENTION_SCHEDULE_VERSION,
   deriveLearnerState: deriveLearnerState,
   getLearningModelContract: getLearningModelContract
 };
