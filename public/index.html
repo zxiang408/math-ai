@@ -224,6 +224,21 @@
       line-height: 1.7;
     }
 
+    .training-hint {
+      margin-top: 14px;
+      padding: 14px;
+      border-radius: 10px;
+      background: #eff6ff;
+      border: 1px solid #bfdbfe;
+      line-height: 1.7;
+      display: none;
+    }
+
+    .training-hint-title {
+      font-weight: bold;
+      margin-bottom: 6px;
+    }
+
     .ability-empty {
       color: #667085;
       padding: 6px 0;
@@ -496,7 +511,7 @@
 
     <div class="notice">
 
-      当前是 V0.6.0。
+      当前是 V0.6.1。
       <br>
       已接入 OpenRouter 免费模型路由，用于错题照片识别与 AI 分析。
       <br>
@@ -537,12 +552,23 @@
       <button class="primary" id="submitTrainingButton">
         提交答案
       </button>
+      <button class="secondary" id="hintTrainingButton" style="display: none;">
+        💡 提示一步
+      </button>
+      <button class="secondary" id="retryTrainingButton" style="display: none;">
+        🔁 再答一次
+      </button>
       <button class="secondary" id="closeTrainingButton">
         关闭
       </button>
     </div>
 
     <div class="retest-result" id="trainingResult" style="display: none;"></div>
+
+    <div class="training-hint" id="trainingHint">
+      <div class="training-hint-title">💡 一步一步想</div>
+      <div id="trainingHintText"></div>
+    </div>
   </div>
 
   <!-- 复测题 -->
@@ -596,9 +622,9 @@
   </div>
 
   <div class="footer">
-    小学数学 AI · V0.6.0
+    小学数学 AI · V0.6.1
     <br>
-    <span id="appVersion">程序版本：V0.6.0</span>
+    <span id="appVersion">程序版本：V0.6.1</span>
   </div>
 
 </div>
@@ -693,6 +719,18 @@
 
   const trainingResult =
     document.getElementById("trainingResult");
+
+  const trainingHint =
+    document.getElementById("trainingHint");
+
+  const trainingHintText =
+    document.getElementById("trainingHintText");
+
+  const hintTrainingButton =
+    document.getElementById("hintTrainingButton");
+
+  const retryTrainingButton =
+    document.getElementById("retryTrainingButton");
 
   const TRAINING_KEY =
     "math-ai-v0.6-training-history";
@@ -1376,6 +1414,78 @@
     return null;
   }
 
+  function getTrainingHints(point, focusTitle, question) {
+    if (point === "数与代数 / 倍数关系") {
+      if (focusTitle === "概念与方法训练") {
+        return [
+          "先不要算答案。把较小的数看成1份，想一想较大的数是几份。",
+          "两个数合起来一共有“1份 + 较大数对应的份数”，先求总份数。",
+          "用两个数的总和除以总份数，得到1份，这就是较小的数。"
+        ];
+      }
+
+      return [
+        "先找出题目中两个数之间的倍数关系，把它们都换成“份”的想法。",
+        "再根据题目给出的和或差，确定一份是多少。",
+        "最后再求题目要求的那个数。"
+      ];
+    }
+
+    if (point === "图形与几何 / 正方形面积") {
+      if (focusTitle === "概念与方法训练") {
+        return [
+          "先回忆正方形的面积公式：面积和边长之间是什么关系？",
+          "边长扩大2倍时，面积中的两个“边长”都会扩大2倍。",
+          "所以要计算2×2，而不是只算一个2。"
+        ];
+      }
+
+      return [
+        "先写出对应的面积公式，再把题目给出的长度代进去。",
+        "如果边长发生变化，先确定新的边长或面积的变化倍数。",
+        "最后检查单位是否写成平方厘米等面积单位。"
+      ];
+    }
+
+    if (point === "数与代数 / 积的变化规律") {
+      return [
+        "先看清楚两个因数分别发生了什么变化。",
+        "一个因数不变、另一个扩大几倍时，积会跟着扩大几倍。",
+        "如果一个扩大、另一个缩小，还要比较两个变化是否互相抵消。"
+      ];
+    }
+
+    if (point === "数与代数 / 四则运算") {
+      return [
+        "先圈出乘法、除法和加减法，想一想应该先算哪一种。",
+        "先完成优先级高的运算，再进行后面的加减。",
+        "算完后再从头检查一遍运算顺序。"
+      ];
+    }
+
+    if (point === "数与代数 / 小数") {
+      return [
+        "先观察小数点的位置，不要把整数部分和小数部分混在一起。",
+        "把小数点对齐，再进行计算。",
+        "最后检查结果的小数位数和大小是否合理。"
+      ];
+    }
+
+    if (point === "数与代数 / 比与比例") {
+      return [
+        "先找出比的两项之间的倍数关系。",
+        "当一项扩大或缩小时，另一项要按照相同的比例变化。",
+        "最后用题目给出的数检查结果是否符合原来的比。"
+      ];
+    }
+
+    return [
+      "先把题目中最重要的已知条件找出来。",
+      "想一想这个条件对应的知识点和公式是什么。",
+      "只做关键的一步，再根据这一步继续完成。"
+    ];
+  }
+
   function showTrainingPanel(point, history, stats) {
     const focus = getTrainingFocus(
       point,
@@ -1397,7 +1507,14 @@
       focus: focus,
       question: training.question,
       correct_answer: training.correct_answer,
-      explanation: training.explanation || ""
+      explanation: training.explanation || "",
+      hints: getTrainingHints(
+        point,
+        focus.title,
+        training.question
+      ),
+      hintIndex: 0,
+      attemptCount: 0
     };
 
     trainingCard.style.display = "block";
@@ -1410,6 +1527,10 @@
     trainingAnswer.value = "";
     trainingAnswer.disabled = false;
     submitTrainingButton.disabled = false;
+    hintTrainingButton.style.display = "none";
+    retryTrainingButton.style.display = "none";
+    trainingHint.style.display = "none";
+    trainingHintText.textContent = "";
     trainingResult.style.display = "none";
 
     trainingCard.scrollIntoView({
@@ -1785,6 +1906,9 @@
       return;
     }
 
+    activeTraining.attemptCount =
+      (activeTraining.attemptCount || 0) + 1;
+
     const attempt = {
       id:
         String(Date.now()) +
@@ -1803,7 +1927,11 @@
       student_answer:
         studentAnswer,
       passed:
-        passed
+        passed,
+      attempt_number:
+        activeTraining.attemptCount,
+      hint_level:
+        activeTraining.hintIndex || 0
     };
 
     saveTrainingAttempt(attempt);
@@ -1812,25 +1940,63 @@
 
     if (passed) {
       trainingResult.textContent =
-        "✅ 训练通过。" +
+        "✅ 这次做对了！说明你已经抓住了这道题的关键。" +
         (activeTraining.explanation
           ? " 正确思路：" + activeTraining.explanation
           : "");
+
       trainingStatus.textContent =
-        "本次训练结果已记录；能力状态暂不因此次训练直接改变。";
-    } else {
-      trainingResult.textContent =
-        "❌ 这道训练题没有通过。正确答案：" +
-        activeTraining.correct_answer +
-        (activeTraining.explanation
-          ? "。正确思路：" + activeTraining.explanation
-          : "");
-      trainingStatus.textContent =
-        "本次训练结果已记录；建议继续训练后再进行复测。";
+        "本次训练已完成；训练结果不会直接改变能力状态。";
+
+      trainingHint.style.display = "none";
+      hintTrainingButton.style.display = "none";
+      retryTrainingButton.style.display = "none";
+      trainingAnswer.disabled = true;
+      submitTrainingButton.disabled = true;
+      return;
     }
+
+    trainingResult.textContent =
+      "❌ 这次还没有做对。先不公布答案，我们一步一步想。";
+
+    trainingStatus.textContent =
+      "训练结果已记录；能力状态不会因为这次训练直接改变。";
 
     trainingAnswer.disabled = true;
     submitTrainingButton.disabled = true;
+
+    trainingHint.style.display = "block";
+
+    const hints = Array.isArray(activeTraining.hints)
+      ? activeTraining.hints
+      : [];
+
+    if (hints.length > 0) {
+      if ((activeTraining.hintIndex || 0) === 0) {
+        activeTraining.hintIndex = 1;
+        trainingHintText.textContent = hints[0];
+      } else {
+        trainingHintText.textContent =
+          hints[Math.min(
+            activeTraining.hintIndex - 1,
+            hints.length - 1
+          )];
+      }
+
+      if (activeTraining.hintIndex < hints.length) {
+        hintTrainingButton.style.display = "inline-block";
+      } else {
+        hintTrainingButton.style.display = "none";
+        trainingStatus.textContent =
+          "关键思路已经提示出来了，再自己算一次。";
+      }
+
+      retryTrainingButton.style.display = "inline-block";
+    } else {
+      trainingHintText.textContent =
+        "请回到题目，重新检查条件和计算步骤。";
+      retryTrainingButton.style.display = "inline-block";
+    }
   }
 
   submitTrainingButton.addEventListener(
@@ -1838,11 +2004,58 @@
     submitTraining
   );
 
+  hintTrainingButton.addEventListener(
+    "click",
+    function () {
+      if (!activeTraining) return;
+
+      const hints = Array.isArray(activeTraining.hints)
+        ? activeTraining.hints
+        : [];
+
+      if (
+        activeTraining.hintIndex <
+        hints.length
+      ) {
+        trainingHint.style.display = "block";
+        trainingHintText.textContent =
+          hints[activeTraining.hintIndex];
+        activeTraining.hintIndex += 1;
+
+        if (
+          activeTraining.hintIndex >=
+          hints.length
+        ) {
+          hintTrainingButton.style.display = "none";
+          trainingStatus.textContent =
+            "关键思路已经提示出来了，再自己算一次。";
+        }
+      }
+    }
+  );
+
+  retryTrainingButton.addEventListener(
+    "click",
+    function () {
+      if (!activeTraining) return;
+
+      trainingAnswer.value = "";
+      trainingAnswer.disabled = false;
+      submitTrainingButton.disabled = false;
+      trainingStatus.textContent =
+        "请根据提示再独立做一次。";
+      trainingAnswer.focus();
+    }
+  );
+
   closeTrainingButton.addEventListener(
     "click",
     function () {
       trainingCard.style.display = "none";
       activeTraining = null;
+      trainingHint.style.display = "none";
+      hintTrainingButton.style.display = "none";
+      retryTrainingButton.style.display = "none";
     }
   );
 
