@@ -1594,8 +1594,20 @@
       }
 
       if (
+        evidenceKey === "side_scale"
+      ) {
+        return {
+          question:
+            "一个正方形的边长扩大2倍，面积扩大多少倍？",
+          correct_answer: "4倍",
+          explanation:
+            "正方形面积等于边长×边长。边长扩大2倍，面积扩大2×2=4倍。"
+        };
+      }
+
+      if (
         focusTitle === "稳定性变式训练" ||
-        evidenceKey === "unit_value"
+        evidenceKey === "area_scale_or_calculation"
       ) {
         const side = randInt(5, 9);
         const newSide = side * 2;
@@ -3361,7 +3373,10 @@
 
     const matching = (Array.isArray(trainingHistory) ? trainingHistory : [])
       .filter(function (item) {
-        return standardizeKnowledgePoint(item.knowledge_point) === point;
+        return (
+          standardizeKnowledgePoint(item.knowledge_point) === point &&
+          item.attempt_type !== "training_completed"
+        );
       });
 
     if (matching.length === 0) {
@@ -3476,6 +3491,9 @@
       if (group.simplified > 0) {
         state.textContent =
           "证据提示：这一环节曾需要进一步拆小，仍值得继续观察。";
+      } else if (group.passes === 0 && group.failures > 0) {
+        state.textContent =
+          "证据提示：目前还没有正确作答证据，这一环节需要继续练习与观察。";
       } else if (group.failures > 0) {
         state.textContent =
           "证据提示：这一环节已经出现正确作答，但稳定性还需要更多练习。";
