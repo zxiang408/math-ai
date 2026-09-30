@@ -650,7 +650,7 @@ function generateFastRetest(knowledgePoint) {
     const unit = randInt(3, 8);
     const first = unit * 2;
     const second = unit * 3;
-    const target = unit * 5;
+    const target = second * 2;
     return {
       question: `如果甲、乙两数的比是${first}:${second}，当甲是${first * 2}时，乙是多少？`,
       correct_answer: String(target),
