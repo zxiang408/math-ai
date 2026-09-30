@@ -1,4 +1,4 @@
-const APP_VERSION = "V0.9.2";
+const APP_VERSION = "V0.15.0";
 
 const JSON_HEADERS = {
   "Content-Type": "application/json; charset=UTF-8",
@@ -949,6 +949,283 @@ ${knowledgePoints.join("、") || "未指定"}
   );
 }
 
+async function tutorStep(request, env) {
+  if (request.method === "OPTIONS") {
+    const headers = new Headers({
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+      "Access-Control-Max-Age": "86400",
+    });
+    const origin = request.headers.get("Origin");
+    if (origin) {
+      headers.set("Access-Control-Allow-Origin", origin);
+      headers.set("Vary", "Origin");
+    }
+    return new Response(null, { status: 204, headers });
+  }
+
+  if (request.method !== "POST") {
+    return jsonResponse({ error: "只支持 POST 请求。" }, 405, request);
+  }
+
+  if (!env.OPENROUTER_API_KEY) {
+    return jsonResponse(
+      { error: "服务器尚未配置 OPENROUTER_API_KEY。" },
+      500,
+      request,
+    );
+  }
+
+  let body;
+  try {
+    body = await request.json();
+  } catch (_) {
+    return jsonResponse({ error: "请求数据不是有效的 JSON。" }, 400, request);
+  }
+
+  const point = String(body?.knowledge_point || "").trim();
+  const question = String(body?.question || "").trim();
+  const correctAnswer = String(body?.correct_answer || "").trim();
+  const currentPrompt = String(body?.current_prompt || "").trim();
+  const studentAnswer = String(body?.student_answer || "").trim();
+  const stepIndex = Math.max(
+    0,
+    Number.isFinite(Number(body?.step_index))
+      ? Number(body.step_index)
+      : 0,
+  );
+  const steps = Array.isArray(body?.steps) ? body.steps : [];
+  const history = Array.isArray(body?.history)
+    ? body.history.slice(-8)
+    : [];
+
+  if (!point || !question || !currentPrompt || !studentAnswer) {
+    return jsonResponse(
+      { error: "缺少 AI 辅导所需的题目、当前步骤或孩子答案。" },
+      400,
+      request,
+    );
+  }
+
+  if (point !== "数与代数 / 倍数关系") {
+    return jsonResponse(
+      {
+        enabled: false,
+        action: "fallback",
+        coach_message: "",
+        next_prompt: "",
+        diagnosis: "",
+        confidence: 1,
+        model: "deterministic_fallback",
+      },
+      200,
+      request,
+    );
+  }
+
+  const safeSteps = steps.map(function (step, index) {
+    return {
+      index: index,
+      prompt: String(step?.prompt || ""),
+      accepted_hint: Array.isArray(step?.accepted)
+        ? step.accepted.map(function (value) {
+            return String(value);
+          })
+        : [],
+    };
+  });
+
+  const prompt = `你是一名小学数学一对一辅导老师。
+这是“数与代数 / 倍数关系”的针对性训练。
+你的任务不是直接给孩子答案，而是理解孩子刚才的回答，并决定下一步怎样教。
+
+【题目】
+${question}
+
+【当前训练步骤】
+第${stepIndex + 1}步：${currentPrompt}
+
+【孩子刚才的回答】
+${studentAnswer}
+
+【程序提供的标准步骤骨架】
+${JSON.stringify(safeSteps, null, 2)}
+
+【之前的互动记录】
+${JSON.stringify(history, null, 2)}
+
+【程序已知的最终正确答案】
+${correctAnswer}
+
+必须遵守：
+1. 不要直接公布整道题的最终答案，也不要替孩子完成后面的计算。
+2. 先判断孩子当前这一步的理解。特别注意区分“1份”“倍数对应的份数”“总份数”和“具体数值”。
+3. 如果孩子这一步正确，action 用“advance”；如果已经是最后一步，用“finish”。
+4. 如果孩子错误但只是理解接近，action 用“retry”，换一种更容易理解的问法。
+5. 如果孩子连续卡住、概念混淆明显，action 用“simplify”，把当前一步拆得更小。
+6. next_step_index 只能等于当前步骤或下一步骤，不能跳步。
+7. next_prompt 是下一句给孩子看的话，语言要短、自然、适合小学四年级。
+8. coach_message 先指出孩子哪里想对了或哪里需要再想，不能把后面的答案一次性告诉孩子。
+9. 不要修改数学真值。程序会单独负责最终答案校验。
+10. 只返回合法 JSON。
+
+字段：
+{
+  "correct": true,
+  "action": "advance",
+  "coach_message": "给孩子的简短反馈",
+  "next_step_index": 1,
+  "next_prompt": "下一句给孩子看的问题",
+  "diagnosis": "对孩子当前理解状态的简短判断",
+  "confidence": 0.0
+}
+
+action 只能是：
+advance / retry / simplify / finish
+`;
+
+  const result = await requestStructuredJson(
+    env,
+    prompt,
+    "tutor_step",
+    {
+      correct: {
+        type: "boolean",
+        description: "孩子当前步骤在概念上是否正确",
+      },
+      action: {
+        type: "string",
+        enum: ["advance", "retry", "simplify", "finish"],
+        description: "下一教学动作",
+      },
+      coach_message: {
+        type: "string",
+        description: "给孩子看的简短反馈",
+      },
+      next_step_index: {
+        type: "integer",
+        minimum: 0,
+        maximum: Math.max(0, steps.length - 1),
+        description: "下一教学步骤索引",
+      },
+      next_prompt: {
+        type: "string",
+        description: "下一句给孩子看的问题或提示",
+      },
+      diagnosis: {
+        type: "string",
+        description: "对孩子当前理解状态的简短判断",
+      },
+      confidence: {
+        type: "number",
+        minimum: 0,
+        maximum: 1,
+        description: "对教学判断的把握度",
+      },
+    },
+    [
+      "correct",
+      "action",
+      "coach_message",
+      "next_step_index",
+      "next_prompt",
+      "diagnosis",
+      "confidence",
+    ],
+  );
+
+  if (!result.ok) {
+    return jsonResponse(result.data, result.status, request);
+  }
+
+  const parsed = result.data || {};
+  let action = [
+    "advance",
+    "retry",
+    "simplify",
+    "finish",
+  ].includes(String(parsed.action || ""))
+    ? String(parsed.action)
+    : "retry";
+
+  let nextStepIndex = Number.isInteger(parsed.next_step_index)
+    ? parsed.next_step_index
+    : stepIndex;
+
+  nextStepIndex = Math.max(
+    stepIndex,
+    Math.min(stepIndex + 1, Math.max(stepIndex, steps.length - 1)),
+  );
+
+  const accepted = Array.isArray(steps[stepIndex]?.accepted)
+    ? steps[stepIndex].accepted
+    : [];
+
+  const normalizedStudent = studentAnswer
+    .trim()
+    .replace(/\s+/g, "");
+
+  const localAccepted = accepted.some(function (value) {
+    return String(value)
+      .trim()
+      .replace(/\s+/g, "") === normalizedStudent;
+  });
+
+  const numericStudent = extractLastNumericValue(normalizedStudent);
+
+  const localAcceptedWithNumber =
+    numericStudent !== null &&
+    accepted.some(function (value) {
+      const n = extractLastNumericValue(
+        String(value)
+          .trim()
+          .replace(/\s+/g, ""),
+      );
+      return (
+        n !== null &&
+        Math.abs(numericStudent - n) < 1e-10
+      );
+    });
+
+  const deterministicCorrect =
+    localAccepted || localAcceptedWithNumber;
+
+  // 数学真值由程序决定。AI 不能因为误判而让孩子跳过一个步骤。
+  if (deterministicCorrect) {
+    if (stepIndex >= steps.length - 1) {
+      action = "finish";
+      nextStepIndex = stepIndex;
+    } else {
+      action = "advance";
+      nextStepIndex = stepIndex + 1;
+    }
+  } else if (action === "advance" || action === "finish") {
+    action = "retry";
+    nextStepIndex = stepIndex;
+  }
+
+  const safeConfidence =
+    typeof parsed.confidence === "number"
+      ? Math.max(0, Math.min(1, parsed.confidence))
+      : null;
+
+  return jsonResponse(
+    {
+      enabled: true,
+      correct: deterministicCorrect,
+      action: action,
+      coach_message: String(parsed.coach_message || "").trim(),
+      next_step_index: nextStepIndex,
+      next_prompt: String(parsed.next_prompt || "").trim(),
+      diagnosis: String(parsed.diagnosis || "").trim(),
+      confidence: safeConfidence,
+      model: result.model || null,
+    },
+    200,
+    request,
+  );
+}
+
 async function analyzeImage(request, env) {
   if (request.method === "OPTIONS") {
     const headers = new Headers({
@@ -1251,6 +1528,10 @@ export default {
 
     if (url.pathname === "/api/retest/evaluate") {
       return evaluateRetest(request, env);
+    }
+
+    if (url.pathname === "/api/tutor/step") {
+      return tutorStep(request, env);
     }
 
     return env.ASSETS.fetch(request);
