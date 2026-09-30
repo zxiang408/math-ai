@@ -194,6 +194,7 @@
     .overview-count {
       color: #475467;
       white-space: nowrap;
+      margin-left: 12px;
     }
 
     .ability-empty {
@@ -265,6 +266,7 @@
 
     .history-tags {
       margin-top: 6px;
+      line-height: 1.8;
     }
 
     .history-tag {
@@ -593,8 +595,10 @@
     return "无法判断";
   }
 
-  function standardizeErrorNature(value) {
+  function standardizeErrorNature(value, errorType) {
     const text = String(value || "").trim();
+    const normalizedType =
+      standardizeErrorType(errorType);
 
     if (
       text === "偶然失误" ||
@@ -619,6 +623,17 @@
       text.includes("未掌握")
     ) {
       return "知识理解不足";
+    }
+
+    if (normalizedType === "概念理解错误") {
+      return "知识理解不足";
+    }
+
+    if (
+      normalizedType === "抄写/书写错误" ||
+      normalizedType === "粗心/注意力错误"
+    ) {
+      return "偶然失误";
     }
 
     return "无法判断";
@@ -728,7 +743,10 @@
           const normalizedType =
             standardizeErrorType(errorType);
           const normalizedNature =
-            standardizeErrorNature(errorNature);
+            standardizeErrorNature(
+              errorNature,
+              normalizedType
+            );
 
           if (normalizedType !== errorType) {
             errorType = normalizedType;
@@ -1110,7 +1128,8 @@
         data.error_type
       ),
       error_nature: standardizeErrorNature(
-        data.error_nature
+        data.error_nature,
+        data.error_type
       ),
       analysis: data.analysis || "",
       confidence:
