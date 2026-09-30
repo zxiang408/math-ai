@@ -5494,7 +5494,171 @@ window.MathAILearningModel = {
       if (!raw) return [];
 
       const data = JSON.parse(raw);
-      return Array.isArray(data) ? data : [];
+
+      if (!Array.isArray(data)) {
+        return [];
+      }
+
+      /*
+       * V0.21 历史兼容迁移：
+       * V0.20 的“整题首次答对”只记录了 overall_independent_answer，
+       * 但同一 training_session_id 的 training_completed 记录已经保存
+       * micro_skill_key / micro_skill_label。
+       *
+       * 因此这里把历史独立答对证据补写到对应微技能上，让升级前已经
+       * 完成的训练轮次不被丢失。迁移是幂等的，同一轮不会重复增加。
+       */
+      const completionMap = {};
+
+      data.forEach(function (item) {
+        if (
+          item &&
+          item.attempt_type === "training_completed" &&
+          item.training_session_id &&
+          item.micro_skill_key
+        ) {
+          completionMap[String(item.training_session_id)] = item;
+        }
+      });
+
+      let changed = false;
+      const migrated = data.slice();
+
+      data.forEach(function (item) {
+        if (
+          !item ||
+          item.attempt_type !== "initial_answer" ||
+          item.passed !== true ||
+          !item.training_session_id
+        ) {
+          return;
+        }
+
+        const sessionId =
+          String(item.training_session_id);
+
+        const completion =
+          completionMap[sessionId];
+
+        if (
+          !completion ||
+          !completion.micro_skill_key
+        ) {
+          return;
+        }
+
+        const alreadyExists =
+          data.some(function (record) {
+            return (
+              record &&
+              record.training_session_id &&
+              String(record.training_session_id) === sessionId &&
+              record.evidence_key ===
+                completion.micro_skill_key &&
+              record.attempt_type !==
+                "training_completed"
+            );
+          });
+
+        if (alreadyExists) {
+          return;
+        }
+
+        migrated.push({
+          id:
+            String(item.id || Date.now()) +
+            "-skill-migrated",
+          created_at:
+            item.created_at ||
+            completion.created_at ||
+            new Date().toISOString(),
+          knowledge_point:
+            item.knowledge_point ||
+            completion.knowledge_point ||
+            "",
+          requested_knowledge_point:
+            item.requested_knowledge_point ||
+            completion.requested_knowledge_point ||
+            item.knowledge_point ||
+            "",
+          redirected_from_prerequisite:
+            Boolean(
+              item.redirected_from_prerequisite ||
+              completion.redirected_from_prerequisite
+            ),
+          focus:
+            item.focus ||
+            completion.focus ||
+            "",
+          difficulty:
+            Number(item.difficulty || completion.difficulty || 1),
+          difficulty_label:
+            item.difficulty_label ||
+            completion.difficulty_label ||
+            "基础",
+          difficulty_reason:
+            item.difficulty_reason ||
+            completion.difficulty_reason ||
+            "",
+          question:
+            item.question ||
+            completion.question ||
+            "",
+          correct_answer:
+            item.correct_answer ||
+            completion.correct_answer ||
+            "",
+          student_answer:
+            item.student_answer ||
+            "",
+          passed:
+            true,
+          attempt_number:
+            Number(item.attempt_number || 1),
+          attempt_type:
+            "micro_skill_initial_answer_migrated",
+          training_session_id:
+            sessionId,
+          evidence_key:
+            completion.micro_skill_key,
+          evidence_label:
+            completion.micro_skill_label ||
+            completion.micro_skill_key,
+          step_number: 0,
+          step_attempt_number: 1,
+          step_mode: "normal",
+          simplification_used: false,
+          session_index:
+            Number(
+              item.session_index ||
+              completion.session_index ||
+              1
+            )
+        });
+
+        changed = true;
+      });
+
+      if (changed) {
+        try {
+          localStorage.setItem(
+            TRAINING_KEY,
+            JSON.stringify(
+              migrated
+                .slice(0, 300)
+            )
+          );
+        } catch (error) {
+          console.error(
+            "迁移历史微技能证据失败：",
+            error
+          );
+        }
+
+        return migrated;
+      }
+
+      return data;
     } catch (error) {
       console.error("读取训练记录失败：", error);
       return [];
