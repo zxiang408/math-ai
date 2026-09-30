@@ -3464,7 +3464,10 @@ window.MathAILearningModel = {
       findDefinition(requestedKey) ||
       findFirstUnmastered();
 
-    let selected = requested;
+    let selected =
+      stateMap[requested.key]?.state === "mastered"
+        ? findFirstUnmastered()
+        : requested;
 
     if (!prerequisitesReady(selected)) {
       selected =
