@@ -775,6 +775,24 @@ async function generateRetest(request, env) {
   const knowledgePoint =
     String(body?.knowledge_point || "").trim();
 
+  const purpose =
+    String(body?.purpose || "").trim();
+
+  const sourceQuestion =
+    String(body?.source_question || "").trim();
+
+  const sourceStudentAnswer =
+    String(body?.source_student_answer || "").trim();
+
+  const sourceCorrectAnswer =
+    String(body?.source_correct_answer || "").trim();
+
+  const sourceErrorType =
+    String(body?.source_error_type || "").trim();
+
+  const sourceErrorNature =
+    String(body?.source_error_nature || "").trim();
+
   if (!knowledgePoint) {
     return jsonResponse(
       { error: "缺少需要复测的知识点。" },
@@ -785,14 +803,34 @@ async function generateRetest(request, env) {
 
   // 常见小学知识点优先走本地题型模板，避免孩子每次点题都等待免费模型。
   // 未覆盖的知识点继续使用 AI 生成，不改变原有功能。
-  const fastRetest = generateFastRetest(knowledgePoint);
+  const fastRetest =
+    purpose === "same_type_training"
+      ? null
+      : generateFastRetest(knowledgePoint);
 
   if (fastRetest) {
     return jsonResponse(fastRetest, 200, request);
   }
 
+  const sameTypeContext =
+    purpose === "same_type_training" &&
+    sourceQuestion
+      ? `
+【原错题，仅供后台出题参照】
+题目：${sourceQuestion}
+孩子答案：${sourceStudentAnswer || "无法确认"}
+正确答案：${sourceCorrectAnswer || "无法确认"}
+错误类型：${sourceErrorType || "无法判断"}
+错误性质：${sourceErrorNature || "无法判断"}
+
+这不是讲题任务。请生成一道与原题考查同一种核心计算或思考方法、但数字或情境不同的新题。不要重复原题，不要解释原题。
+`
+      : "";
+
   const prompt = `你是一名小学数学老师。
-请针对以下知识点生成 1 道“复测题”，用于判断孩子是否真正理解这个知识点：
+${sameTypeContext}
+
+请针对以下知识点生成 1 道新题：
 
 知识点：${knowledgePoint}
 
