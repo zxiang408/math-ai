@@ -254,6 +254,7 @@
   }
 
   function normalizeVariant(variant, point) {
+    var question = text(variant && variant.question);
     var steps = Array.isArray(variant && variant.steps)
       ? variant.steps.map(function (step) {
           return {
@@ -266,28 +267,88 @@
         }).filter(function (step) { return step.prompt; }).slice(0, 4)
       : [];
 
+    // 对“多块正方形地毯铺满区域”这类题，前端也做一道最后保险：
+    // 就算上游 AI 返回了泛化提示，也必须把孩子引到正确的核心步骤。
+    var isSquareCarpet =
+      point === "图形与几何 / 正方形面积" &&
+      /正方形/.test(question) &&
+      /(地毯|方砖|地垫|瓷砖)/.test(question) &&
+      /(块|张|片)/.test(question) &&
+      /面积/.test(question);
+
+    if (isSquareCarpet) {
+      var countMatch = question.match(/(\\d+(?:\\.\\d+)?)\\s*(?:块|张|片)/);
+      var sideMatch = question.match(/边长(?:为|是)?\\s*(\\d+(?:\\.\\d+)?)/);
+      var count = countMatch ? countMatch[1] : "";
+      var side = sideMatch ? sideMatch[1] : "";
+
+      steps = [
+        {
+          prompt: "先只算1块正方形地毯的面积。边长是" + side + "米，请填写：1块地毯的面积 = ___ 平方米（只填一个数）。",
+          retry_prompt: "提示：正方形的面积 = 边长 × 边长。现在只算1块地毯，所以算" + side + "×" + side + "，不要乘" + count + "块。",
+          accepted: []
+        },
+        {
+          prompt: "第1步已经得到1块地毯的面积。现在一共有" + count + "块，请填写：整个区域的面积 = 1块面积 × " + count + " = ___ 平方米。",
+          retry_prompt: "提示：用刚才“1块地毯的面积”再乘" + count + "，现在只填写总面积。",
+          accepted: []
+        }
+      ];
+
+      // 正方形地毯题的标准答案如果可计算，则直接写进步骤核验。
+      if (side && count) {
+        var single = Number(side) * Number(side);
+        var total = single * Number(count);
+        steps[0].accepted = [String(single), String(single) + "平方米"];
+        steps[1].accepted = [String(total), String(total) + "平方米"];
+      }
+    }
+
     if (steps.length < 2) {
       steps = [
         {
           prompt: "先找出这一步需要求的那个结果，并只填写这个结果。",
-          retry_prompt: "我们只重做这一小步。请按刚才的提示再算一次，只填写这一步的结果。",
+          retry_prompt: "提示：先看清楚这一步到底要算什么。只填写当前这一步的结果，不要往后算。",
           accepted: []
         },
         {
           prompt: "根据刚才得到的结果，完成下一步计算。",
-          retry_prompt: "先看看上一小步得到的结果，再完成这一小步。",
+          retry_prompt: "提示：先用上一小步得到的结果，再完成这一小步。",
           accepted: []
         }
       ];
     }
 
     return {
-      question: text(variant && variant.question),
+      question: question,
       correct_answer: text(variant && variant.correct_answer),
       knowledge_points: [point],
       explanation: text(variant && variant.explanation),
       steps: steps
     };
+  }
+
+  function buildChildHint(variant, stepIndex) {
+    var question = text(variant && variant.question);
+    var point = text(variant && variant.knowledge_points && variant.knowledge_points[0]);
+
+    if (
+      point === "图形与几何 / 正方形面积" &&
+      /正方形/.test(question) &&
+      /(地毯|方砖|地垫|瓷砖)/.test(question)
+    ) {
+      var countMatch = question.match(/(\\d+(?:\\.\\d+)?)\\s*(?:块|张|片)/);
+      var sideMatch = question.match(/边长(?:为|是)?\\s*(\\d+(?:\\.\\d+)?)/);
+      var count = countMatch ? countMatch[1] : "";
+      var side = sideMatch ? sideMatch[1] : "";
+
+      if (stepIndex === 0) {
+        return "提示：正方形的面积 = 边长 × 边长。现在只算1块，所以算" + side + "×" + side + "，不要乘" + count + "块。";
+      }
+      return "提示：把刚才算出的1块地毯面积，乘以" + count + "块，就得到整个区域的面积。";
+    }
+
+    return "提示：先只解决当前这一小步，看看题目中哪些数字会直接用到。不要急着做后面的计算。";
   }
 
   function renderHome() {
@@ -608,8 +669,10 @@
       '<div class="v11-question compact">' + escapeHTML(variant.question) + '</div>' +
       '<div class="v11-ai-bubble">' + escapeHTML(state.currentPrompt) + '</div>' +
       '<div class="v11-step-hint">这一格只填写当前这一步的答案，不用写后面的步骤。</div>' +
+      '<div id="v11-manual-hint" class="v11-manual-hint" style="display:none"></div>' +
       '<input id="v11-step-answer" class="v11-input" placeholder="填写这一步的答案" autocomplete="off">' +
       '<div id="v11-step-feedback" class="v11-step-feedback"></div>',
+      '<button id="v11-hint-btn" class="v11-secondary">💡 给我一个提示</button>' +
       '<button id="v11-step-submit" class="v11-primary">提交这一步</button>'
     );
 
@@ -699,12 +762,25 @@
           renderGuidedNextStep(text(data.coach_message));
         }, 450);
       } else {
-        state.currentPrompt =
+        var retryPrompt =
           text(data.next_prompt) ||
           text(data.coach_message) ||
-          oldPrompt;
+          "";
+        state.currentPrompt =
+          retryPrompt ||
+          buildChildHint(variant, state.stepIndex);
+
         var promptBox = document.querySelector(".v11-ai-bubble");
-        if (promptBox) promptBox.textContent = state.currentPrompt;
+        if (promptBox) {
+          promptBox.textContent = state.currentPrompt;
+        }
+
+        var hintBox = document.getElementById("v11-manual-hint");
+        if (hintBox) {
+          hintBox.textContent = "💡 " + buildChildHint(variant, state.stepIndex);
+          hintBox.style.display = "block";
+        }
+
         if (input) {
           input.value = "";
           input.focus();
@@ -732,10 +808,22 @@
       '<div class="v11-guide-intro">' + escapeHTML(coachMessage || "很好。") + '</div>' +
       '<div class="v11-ai-bubble">' + escapeHTML(text(next && next.prompt) || state.currentPrompt) + '</div>' +
       '<div class="v11-step-hint">这一格只填写当前这一步的答案，不用写后面的步骤。</div>' +
+      '<div id="v11-manual-hint" class="v11-manual-hint" style="display:none"></div>' +
       '<input id="v11-step-answer" class="v11-input" placeholder="填写这一步的答案" autocomplete="off">' +
       '<div id="v11-step-feedback" class="v11-step-feedback"></div>',
+      '<button id="v11-hint-btn" class="v11-secondary">💡 给我一个提示</button>' +
       '<button id="v11-step-submit" class="v11-primary">提交这一步</button>'
     );
+    var hintBtn = document.getElementById("v11-hint-btn");
+    if (hintBtn) {
+      hintBtn.onclick = function () {
+        var hintBox = document.getElementById("v11-manual-hint");
+        if (hintBox) {
+          hintBox.textContent = "💡 " + buildChildHint(variant, state.stepIndex);
+          hintBox.style.display = "block";
+        }
+      };
+    }
     document.getElementById("v11-step-submit").onclick = submitGuidedStep;
     var input = document.getElementById("v11-step-answer");
     input.focus();
@@ -965,7 +1053,7 @@
       ".v11-progress{color:#667085;font-size:13px;font-weight:700;margin-bottom:10px}.v11-question{padding:18px;border-radius:14px;background:#f8fafc;border:1px solid #eaecf0;font-size:19px;line-height:1.8;font-weight:700}.v11-question.compact{font-size:16px;font-weight:600}" +
       ".v11-independent-note,.v11-result-note,.v11-next-review,.v11-archive-rule,.v11-guide-intro{margin-top:14px;color:#475467;line-height:1.7;font-size:14px}" +
       ".v11-input{width:100%;margin-top:16px;padding:13px 14px;border:1px solid #cfd6e0;border-radius:11px;font-size:17px;outline:none}.v11-input:focus{border-color:#6366f1;box-shadow:0 0 0 3px rgba(99,102,241,.12)}" +
-      ".v11-inline-message,.v11-step-feedback{min-height:22px;margin-top:10px;font-size:14px}.v11-step-hint{margin:10px 0 8px;color:#667085;font-size:13px;line-height:1.5}.v11-ai-bubble{margin-top:16px;padding:15px 16px;border-radius:16px 16px 16px 4px;background:#eef2ff;color:#3730a3;line-height:1.75;font-size:16px}.v11-step-feedback .ok{margin-top:10px;color:#15803d;line-height:1.7}.v11-step-feedback .again{margin-top:10px;color:#b45309;line-height:1.7}" +
+      ".v11-inline-message,.v11-step-feedback{min-height:22px;margin-top:10px;font-size:14px}.v11-manual-hint{margin:10px 0;padding:10px 12px;border-radius:10px;background:#fff7ed;color:#9a3412;font-size:14px;line-height:1.6}.v11-step-hint{margin:10px 0 8px;color:#667085;font-size:13px;line-height:1.5}.v11-ai-bubble{margin-top:16px;padding:15px 16px;border-radius:16px 16px 16px 4px;background:#eef2ff;color:#3730a3;line-height:1.75;font-size:16px}.v11-step-feedback .ok{margin-top:10px;color:#15803d;line-height:1.7}.v11-step-feedback .again{margin-top:10px;color:#b45309;line-height:1.7}" +
       ".v11-success{padding:14px 16px;border-radius:13px;background:#ecfdf3;color:#166534;font-weight:700;line-height:1.7}.v11-archive-ok{padding:14px 16px;border-radius:13px;background:#eefbf3;color:#166534;font-weight:700}.v11-error{padding:14px 16px;border-radius:13px;background:#fff7ed;color:#9a3412;line-height:1.7}" +
       ".v11-loading{text-align:center;padding:36px 14px;color:#475467;line-height:1.8}.v11-loading-sub{margin-top:6px;color:#98a2b3;font-size:13px}.v11-spinner{width:30px;height:30px;border:3px solid #e5e7eb;border-top-color:#4f46e5;border-radius:50%;margin:0 auto 14px;animation:v11spin 1s linear infinite}@keyframes v11spin{to{transform:rotate(360deg)}}" +
       ".v11-review-banner{display:none;justify-content:space-between;align-items:center;gap:12px;margin-bottom:16px;padding:13px 15px;border-radius:14px;background:#fff8e7;border:1px solid #f5d48a;color:#7a5410}.v11-banner-sub{margin-top:3px;font-size:12px;color:#9a7a34}.v11-banner-btn{border:0;border-radius:10px;padding:9px 13px;background:#7c5c16;color:#fff;cursor:pointer;white-space:nowrap}.v11-footer{text-align:center;color:#98a2b3;font-size:12px;line-height:1.6;margin-top:20px}" +
