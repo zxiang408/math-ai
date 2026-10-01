@@ -256,15 +256,28 @@
   function normalizeVariant(variant, point) {
     var steps = Array.isArray(variant && variant.steps)
       ? variant.steps.map(function (step) {
-          return { prompt: text(step && step.prompt) };
+          return {
+            prompt: text(step && step.prompt),
+            retry_prompt: text(step && step.retry_prompt),
+            accepted: Array.isArray(step && step.accepted)
+              ? step.accepted.map(function (value) { return String(value); })
+              : []
+          };
         }).filter(function (step) { return step.prompt; }).slice(0, 4)
       : [];
 
     if (steps.length < 2) {
       steps = [
-        { prompt: "先找出题目告诉我们的已知条件。" },
-        { prompt: "想一想这道题最关键的数量关系是什么。" },
-        { prompt: "根据这个关系完成最后一步计算或判断。" }
+        {
+          prompt: "先找出这一步需要求的那个结果，并只填写这个结果。",
+          retry_prompt: "我们只重做这一小步。请按刚才的提示再算一次，只填写这一步的结果。",
+          accepted: []
+        },
+        {
+          prompt: "根据刚才得到的结果，完成下一步计算。",
+          retry_prompt: "先看看上一小步得到的结果，再完成这一小步。",
+          accepted: []
+        }
       ];
     }
 
@@ -580,7 +593,7 @@
     state.stepIndex = 0;
     state.history = [];
     state.currentPrompt = "";
-    startGuidance("这道新题没有关系，我们把它拆成一步一步。");
+    startGuidance("这道新题有点难，我们把它拆成一步一步。");
   }
 
   function startGuidance(intro) {
@@ -594,7 +607,8 @@
       '<div class="v11-guide-intro">' + escapeHTML(intro || "我们把题目拆小一点。") + '</div>' +
       '<div class="v11-question compact">' + escapeHTML(variant.question) + '</div>' +
       '<div class="v11-ai-bubble">' + escapeHTML(state.currentPrompt) + '</div>' +
-      '<input id="v11-step-answer" class="v11-input" placeholder="把这一步的结果写下来" autocomplete="off">' +
+      '<div class="v11-step-hint">这一格只填写当前这一步的答案，不用写后面的步骤。</div>' +
+      '<input id="v11-step-answer" class="v11-input" placeholder="填写这一步的答案" autocomplete="off">' +
       '<div id="v11-step-feedback" class="v11-step-feedback"></div>',
       '<button id="v11-step-submit" class="v11-primary">提交这一步</button>'
     );
@@ -717,7 +731,8 @@
       '<div class="v11-progress">第 ' + (state.stepIndex + 1) + ' 步</div>' +
       '<div class="v11-guide-intro">' + escapeHTML(coachMessage || "很好。") + '</div>' +
       '<div class="v11-ai-bubble">' + escapeHTML(text(next && next.prompt) || state.currentPrompt) + '</div>' +
-      '<input id="v11-step-answer" class="v11-input" placeholder="把这一步的结果写下来" autocomplete="off">' +
+      '<div class="v11-step-hint">这一格只填写当前这一步的答案，不用写后面的步骤。</div>' +
+      '<input id="v11-step-answer" class="v11-input" placeholder="填写这一步的答案" autocomplete="off">' +
       '<div id="v11-step-feedback" class="v11-step-feedback"></div>',
       '<button id="v11-step-submit" class="v11-primary">提交这一步</button>'
     );
@@ -950,7 +965,7 @@
       ".v11-progress{color:#667085;font-size:13px;font-weight:700;margin-bottom:10px}.v11-question{padding:18px;border-radius:14px;background:#f8fafc;border:1px solid #eaecf0;font-size:19px;line-height:1.8;font-weight:700}.v11-question.compact{font-size:16px;font-weight:600}" +
       ".v11-independent-note,.v11-result-note,.v11-next-review,.v11-archive-rule,.v11-guide-intro{margin-top:14px;color:#475467;line-height:1.7;font-size:14px}" +
       ".v11-input{width:100%;margin-top:16px;padding:13px 14px;border:1px solid #cfd6e0;border-radius:11px;font-size:17px;outline:none}.v11-input:focus{border-color:#6366f1;box-shadow:0 0 0 3px rgba(99,102,241,.12)}" +
-      ".v11-inline-message,.v11-step-feedback{min-height:22px;margin-top:10px;font-size:14px}.v11-ai-bubble{margin-top:16px;padding:15px 16px;border-radius:16px 16px 16px 4px;background:#eef2ff;color:#3730a3;line-height:1.75;font-size:16px}.v11-step-feedback .ok{margin-top:10px;color:#15803d;line-height:1.7}.v11-step-feedback .again{margin-top:10px;color:#b45309;line-height:1.7}" +
+      ".v11-inline-message,.v11-step-feedback{min-height:22px;margin-top:10px;font-size:14px}.v11-step-hint{margin:10px 0 8px;color:#667085;font-size:13px;line-height:1.5}.v11-ai-bubble{margin-top:16px;padding:15px 16px;border-radius:16px 16px 16px 4px;background:#eef2ff;color:#3730a3;line-height:1.75;font-size:16px}.v11-step-feedback .ok{margin-top:10px;color:#15803d;line-height:1.7}.v11-step-feedback .again{margin-top:10px;color:#b45309;line-height:1.7}" +
       ".v11-success{padding:14px 16px;border-radius:13px;background:#ecfdf3;color:#166534;font-weight:700;line-height:1.7}.v11-archive-ok{padding:14px 16px;border-radius:13px;background:#eefbf3;color:#166534;font-weight:700}.v11-error{padding:14px 16px;border-radius:13px;background:#fff7ed;color:#9a3412;line-height:1.7}" +
       ".v11-loading{text-align:center;padding:36px 14px;color:#475467;line-height:1.8}.v11-loading-sub{margin-top:6px;color:#98a2b3;font-size:13px}.v11-spinner{width:30px;height:30px;border:3px solid #e5e7eb;border-top-color:#4f46e5;border-radius:50%;margin:0 auto 14px;animation:v11spin 1s linear infinite}@keyframes v11spin{to{transform:rotate(360deg)}}" +
       ".v11-review-banner{display:none;justify-content:space-between;align-items:center;gap:12px;margin-bottom:16px;padding:13px 15px;border-radius:14px;background:#fff8e7;border:1px solid #f5d48a;color:#7a5410}.v11-banner-sub{margin-top:3px;font-size:12px;color:#9a7a34}.v11-banner-btn{border:0;border-radius:10px;padding:9px 13px;background:#7c5c16;color:#fff;cursor:pointer;white-space:nowrap}.v11-footer{text-align:center;color:#98a2b3;font-size:12px;line-height:1.6;margin-top:20px}" +
