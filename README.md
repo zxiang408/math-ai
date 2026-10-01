@@ -1,10 +1,15 @@
 # math-ai
 
+## V0.24 云端档案可验证同步
+
+V0.24 在 V0.23 的 LocalStorage + Supabase 学习事件架构上，增加云端事件计数、最近同步时间，以及手动同步后的 push → Supabase → pull 往返校验。页面会显示本地事件、云端事件和最近同步时间；校验通过后明确标记往返成功。
+
+
 小学数学 AI 辅导系统。
 
 ## V0.23 云端学习档案
 
-V0.23 保持 LocalStorage 为离线缓存，同时通过 Cloudflare Worker 将统一学习事件同步到 Supabase。
+V0.23 保持 LocalStorage 为离线缓存，同时通过 Cloudflare Worker 将统一学习事件同步到 Supabase；V0.24 在此基础上加入可验证同步。
 
 ### Supabase 数据库
 
@@ -29,7 +34,7 @@ Worker 路由：
 - `GET /api/sync/pull`
 - `POST /api/sync/push`
 
-### 当前同步策略
+### 当前同步策略（V0.24）
 
 页面启动时：
 1. 先显示本地 LocalStorage。
@@ -43,6 +48,6 @@ Worker 路由：
 
 Supabase Secret Key 只在 Cloudflare Worker 中使用；数据库不开放给浏览器匿名访问。
 
-V0.23 仍是单孩子原型，云端 API 尚未加入用户登录/身份认证。真正长期使用前，应在 Cloudflare Access 或后续 Supabase Auth 层增加身份认证，避免公开 Worker 端点被第三方调用。
+V0.23 仍是单孩子原型，云端 API 尚未加入用户登录/身份认证。V0.24 不改变这一安全边界，也不把 Supabase Secret 暴露给前端。真正长期使用前，应在 Cloudflare Access 或后续 Supabase Auth 层增加身份认证，避免公开 Worker 端点被第三方调用。
 
 Supabase REST API 基于 PostgREST，可通过 `/rest/v1/` 访问数据库；upsert 可利用唯一约束实现重复事件的幂等合并。
