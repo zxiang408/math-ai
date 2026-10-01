@@ -792,7 +792,7 @@
     id="resultCard"
   >
 
-    <h2>🧠 AI 分析结果</h2>
+    <h2>✅ 错题已归档</h2>
 
 
     <div class="result-item">
@@ -5668,18 +5668,46 @@ window.MathAILearningModel = {
     point,
     focus,
     sessionIndex,
-    difficulty
+    difficulty,
+    sourceContext
   ) {
-    const local =
-      generateNonRepeatedTargetedTraining(
-        point,
-        focus,
-        sessionIndex,
-        difficulty
+    const hasSourceContext =
+      Boolean(
+        sourceContext &&
+        sourceContext.source_question
       );
+
+    const local =
+      hasSourceContext
+        ? null
+        : generateNonRepeatedTargetedTraining(
+            point,
+            focus,
+            sessionIndex,
+            difficulty
+          );
 
     if (local) {
       return local;
+    }
+
+    const requestBody = {
+      knowledge_point: point
+    };
+
+    if (hasSourceContext) {
+      requestBody.purpose =
+        "same_type_training";
+      requestBody.source_question =
+        sourceContext.source_question;
+      requestBody.source_student_answer =
+        sourceContext.source_student_answer || "";
+      requestBody.source_correct_answer =
+        sourceContext.source_correct_answer || "";
+      requestBody.source_error_type =
+        sourceContext.source_error_type || "";
+      requestBody.source_error_nature =
+        sourceContext.source_error_nature || "";
     }
 
     const response =
@@ -5690,9 +5718,7 @@ window.MathAILearningModel = {
           headers: {
             "Content-Type": "application/json"
           },
-          body: JSON.stringify({
-            knowledge_point: point
-          })
+          body: JSON.stringify(requestBody)
         }
       );
 
@@ -5729,7 +5755,13 @@ window.MathAILearningModel = {
     };
   }
 
-  async function showTrainingPanel(point, history, stats, sessionIndex) {
+  async function showTrainingPanel(
+    point,
+    history,
+    stats,
+    sessionIndex,
+    sourceContext
+  ) {
     const plan =
       resolveTrainingTarget(
         point,
@@ -5830,7 +5862,8 @@ window.MathAILearningModel = {
           trainingPoint,
           scheduledFocus,
           sessionIndex || 1,
-          microSkillPlan.difficulty
+          microSkillPlan.difficulty,
+          sourceContext
         );
     } catch (error) {
       console.error(
@@ -10643,24 +10676,14 @@ window.MathAILearningModel = {
 
 
   function renderResult(data) {
-    document.getElementById("question").textContent =
-      data.question || "无法确认";
-
-    document.getElementById("studentAnswer").textContent =
-      data.student_answer || "无法确认";
-
-    document.getElementById("correctAnswer").textContent =
-      data.correct_answer || "无法确认";
-
-    renderKnowledgePoints(data.knowledge_points);
-
-    document.getElementById("errorType").textContent =
-      (data.error_type || "无法判断") +
-      " ｜ " +
-      (data.error_nature || "错误性质无法判断");
+    resultCard
+      .querySelectorAll(".result-item")
+      .forEach(function (item) {
+        item.style.display = "none";
+      });
 
     document.getElementById("analysis").textContent =
-      data.analysis || "暂无分析结果";
+      "这道错题已经进入孩子的能力档案。原题不作为教学题，系统现在会生成一道同类型新题让孩子独立作答。";
 
     resultCard.style.display = "block";
   }
@@ -10853,17 +10876,55 @@ window.MathAILearningModel = {
       if (!saved) {
         status.textContent =
           "AI 分析完成，但错题保存失败，请检查浏览器存储空间。";
+        return;
       }
 
-      const confidenceText =
-        typeof data.confidence === "number"
-          ? `（识别把握度 ${Math.round(data.confidence * 100)}%）`
+      const history =
+        loadHistory();
+
+      const trainingPoint =
+        Array.isArray(data.knowledge_points) &&
+        data.knowledge_points.length > 0
+          ? standardizeKnowledgePoint(
+              data.knowledge_points[0]
+            )
           : "";
 
+      if (!trainingPoint) {
+        status.textContent =
+          "错题已经归档，但暂时无法生成同类型训练题。";
+        return;
+      }
+
+      const stats =
+        getKnowledgeState(
+          trainingPoint,
+          history,
+          loadRetestHistory()
+        );
+
       status.textContent =
-        data.unclear
-          ? "分析完成，但照片中有内容不够清晰，请核对结果。" + confidenceText
-          : "AI 分析完成。" + confidenceText;
+        "错题已归档，正在生成同类型训练题……";
+
+      await showTrainingPanel(
+        trainingPoint,
+        history,
+        stats,
+        1,
+        {
+          source_question:
+            data.question || "",
+          source_student_answer:
+            data.student_answer || "",
+          source_correct_answer:
+            data.correct_answer || "",
+          source_error_type:
+            data.error_type || "",
+          source_error_nature:
+            data.error_nature || ""
+        }
+      );
+
       updateMockModeUI();
 
     } catch (error) {
