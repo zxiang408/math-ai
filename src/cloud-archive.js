@@ -1,5 +1,5 @@
 const MAX_EVENTS_PER_REQUEST = 250;
-const MAX_PULL_EVENTS = 1000;
+const MAX_PULL_EVENTS = 5000;
 const DEFAULT_LEARNER_ID = "local-default";
 
 function text(value) {
@@ -192,18 +192,24 @@ export async function getArchiveStatus(env, learnerId = DEFAULT_LEARNER_ID) {
       configured: false,
       learner_id: learnerId,
       event_count: 0,
-      archive_version: "V0.23.0"
+      latest_occurred_at: null,
+      archive_version: "V0.24.0"
     };
   }
 
   const query =
     "math_ai_learning_events" +
-    "?select=event_id" +
+    "?select=event_id,occurred_at" +
     "&learner_id=eq." +
     encodeURIComponent(learnerId) +
+    "&order=occurred_at.desc" +
     "&limit=1";
 
-  const response = await supabaseFetch(env, query);
+  const response = await supabaseFetch(env, query, {
+    headers: {
+      Prefer: "count=exact"
+    }
+  });
 
   if (!response.ok) {
     const body = await response.text();
@@ -215,14 +221,21 @@ export async function getArchiveStatus(env, learnerId = DEFAULT_LEARNER_ID) {
     );
   }
 
+  const contentRange = response.headers.get("Content-Range") || "";
+  const match = contentRange.match(/\/([0-9]+)$/);
+  const rows = await response.json();
+
   return {
     configured: true,
     learner_id: learnerId,
-    event_count: null,
-    archive_version: "V0.23.0"
+    event_count: match ? Number(match[1]) : null,
+    latest_occurred_at:
+      Array.isArray(rows) && rows[0]?.occurred_at
+        ? rows[0].occurred_at
+        : null,
+    archive_version: "V0.24.0"
   };
 }
-
 export async function pushArchive(
   env,
   learnerId,
@@ -283,7 +296,7 @@ export async function pushArchive(
       },
       body: JSON.stringify([{
         learner_id: normalizedLearnerId,
-        archive_version: "V0.23.0"
+        archive_version: "V0.24.0"
       }])
     }
   );
@@ -358,7 +371,12 @@ export async function pullArchive(
 
   const response = await supabaseFetch(
     env,
-    query
+    query,
+    {
+      headers: {
+        Prefer: "count=exact"
+      }
+    }
   );
 
   if (!response.ok) {
@@ -372,10 +390,17 @@ export async function pullArchive(
   }
 
   const rows = await response.json();
+  const contentRange = response.headers.get("Content-Range") || "";
+  const match = contentRange.match(/\/([0-9]+)$/);
+  const eventCount =
+    match ? Number(match[1]) : (Array.isArray(rows) ? rows.length : 0);
 
   return {
     ok: true,
     learner_id: normalizedLearnerId,
+    event_count: eventCount,
+    truncated:
+      Array.isArray(rows) && rows.length < eventCount,
     events: Array.isArray(rows) ? rows : []
   };
 }
