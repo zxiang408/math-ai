@@ -344,15 +344,10 @@ function normalizeResult(result) {
 function getAIProviders(env) {
   const providers = [];
 
-  if (env?.GROQ_API_KEY) {
-    providers.push({
-      name: "groq",
-      apiKey: env.GROQ_API_KEY,
-      url: "https://api.groq.com/openai/v1/chat/completions",
-      model: "qwen/qwen3.8-27b",
-    });
-  }
-
+  /*
+   * 当前产品的主 AI 是 OpenRouter。
+   * Groq 若配置了旧/失效密钥，不应阻塞真正可用的 OpenRouter 请求。
+   */
   if (env?.OPENROUTER_API_KEY) {
     providers.push({
       name: "openrouter",
@@ -365,6 +360,15 @@ function getAIProviders(env) {
         "qwen/qwen3.8-27b:free",
         "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
       ],
+    });
+  }
+
+  if (env?.GROQ_API_KEY) {
+    providers.push({
+      name: "groq",
+      apiKey: env.GROQ_API_KEY,
+      url: "https://api.groq.com/openai/v1/chat/completions",
+      model: "qwen/qwen3.8-27b",
     });
   }
 
