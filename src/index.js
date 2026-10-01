@@ -2321,23 +2321,6 @@ async function serveApplicationAsset(request, env) {
   const url = new URL(request.url);
   const response = await env.ASSETS.fetch(request);
 
-  if (
-    request.method === "GET" &&
-    (url.pathname === "/" || url.pathname === "/index.html") &&
-    (response.headers.get("content-type") || "").includes("text/html")
-  ) {
-    return new HTMLRewriter()
-      .on("body", {
-        element(element) {
-          element.append(
-            '<script src="/v11-ui.js?v=120"></script>',
-            { html: true }
-          );
-        }
-      })
-      .transform(response);
-  }
-
   return response;
 }
 
