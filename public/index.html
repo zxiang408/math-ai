@@ -5928,6 +5928,7 @@ window.MathAILearningModel = {
       tutor_mode:
         !useMockAI &&
         (
+          Boolean(sourceContext) ||
           trainingPoint === "数与代数 / 倍数关系" ||
           !getSupportedTrainingPoints().has(
             trainingPoint
