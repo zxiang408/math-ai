@@ -506,10 +506,29 @@ function buildRecommendation(knowledgePoints, microSkills) {
         item.state !== STATUS.OBSERVED;
     })
     .map(function (item) {
-      const related = microSkills.filter(function (skill) {
-        return skill.knowledge_point === item.knowledge_point &&
-          skill.state !== "mastered";
-      });
+      const related = microSkills
+        .filter(function (skill) {
+          return skill.knowledge_point === item.knowledge_point &&
+            skill.state !== "mastered";
+        })
+        .sort(function (a, b) {
+          const rank = {
+            prompted: 0,
+            forming: 1,
+            insufficient: 2
+          };
+          const ra = rank[a.state] ?? 9;
+          const rb = rank[b.state] ?? 9;
+
+          if (ra !== rb) return ra - rb;
+          if (a.independentPasses !== b.independentPasses) {
+            return a.independentPasses - b.independentPasses;
+          }
+          return String(a.skill_key).localeCompare(
+            String(b.skill_key),
+            "zh-CN"
+          );
+        });
 
       const focus = related[0] || null;
       return {
