@@ -26,6 +26,11 @@ jobs:
       - name: Run V0.26 ability rebuild regression
         run: node tests/v026-ability-rebuild.spec.mjs
 
+      - name: Validate Cloudflare Worker bundle
+        env:
+          SUPABASE_SECRET_KEY: dry-run-placeholder
+        run: npx wrangler deploy --dry-run
+
       - name: Run V0.23 cloud archive regression
         run: node tests/v023-cloud-archive.spec.mjs
 
