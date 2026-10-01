@@ -9,7 +9,7 @@ import {
   pullArchive
 } from "./cloud-archive.js";
 
-const APP_VERSION = "V0.26.0";
+const APP_VERSION = "MVP-1.0.0";
 
 const JSON_HEADERS = {
   "Content-Type": "application/json; charset=UTF-8",
@@ -1075,18 +1075,6 @@ async function tutorStep(request, env) {
     );
   }
 
-  if (point !== "数与代数 / 倍数关系") {
-    return jsonResponse({
-      enabled: false,
-      action: "fallback",
-      coach_message: "",
-      next_prompt: "",
-      diagnosis: "",
-      confidence: 1,
-      model: "deterministic_fallback",
-    });
-  }
-
   const safeSteps = steps.map(function (step, index) {
     return {
       index: index,
@@ -1094,8 +1082,11 @@ async function tutorStep(request, env) {
     };
   });
 
-  const prompt = `你是一名小学四年级数学一对一辅导老师。
-你现在只辅导“数与代数 / 倍数关系”。
+  const prompt = `你是一名小学数学一对一辅导老师。
+你现在辅导的是一个具体的小学数学知识点。
+
+【目标知识点】
+${point}
 
 【整道题】
 ${question}
@@ -1113,7 +1104,8 @@ ${JSON.stringify(safeSteps)}
 ${JSON.stringify(history)}
 
 你的目标：
-- 判断孩子刚才这一步到底哪里想对了、哪里想错了。
+- 判断孩子刚才这一小步的回答是否正确；correct 必须明确填写 true 或 false。
+- 如果当前步骤没有预先提供固定答案，就根据题目、当前提示和孩子回答判断这一小步是否正确。
 - 不要直接公布整道题最终答案。
 - 不要跳过当前步骤。
 - 如果孩子把“较大数的份数”和“总份数”混淆，要指出这种混淆，但继续让孩子自己回答。
@@ -1126,6 +1118,7 @@ ${JSON.stringify(history)}
 
 JSON：
 {
+  "correct": false,
   "action": "retry",
   "coach_message": "给孩子看的简短反馈",
   "next_prompt": "下一句给孩子看的问题或提示",
@@ -1285,7 +1278,15 @@ advance / retry / simplify / finish
   const deterministicCorrect =
     localAccepted || numericAccepted;
 
-  if (deterministicCorrect) {
+  const hasDeterministicAnswer =
+    accepted.length > 0;
+
+  const stepCorrect =
+    hasDeterministicAnswer
+      ? deterministicCorrect
+      : parsed.correct === true;
+
+  if (stepCorrect) {
     action =
       stepIndex >= steps.length - 1
         ? "finish"
@@ -1312,7 +1313,7 @@ advance / retry / simplify / finish
   return jsonResponse(
     {
       enabled: true,
-      correct: deterministicCorrect,
+      correct: stepCorrect,
       action: action,
       coach_message:
         String(parsed.coach_message || "").trim(),
