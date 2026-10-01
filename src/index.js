@@ -2330,7 +2330,7 @@ async function serveApplicationAsset(request, env) {
       .on("body", {
         element(element) {
           element.append(
-            '<script src="/v11-ui.js"></script>',
+            '<script src="/v11-ui.js?v=120"></script>',
             { html: true }
           );
         }
