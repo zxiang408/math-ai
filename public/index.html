@@ -4847,8 +4847,7 @@ window.MathAILearningModel = {
       };
     }
 
-    // 当前知识点有明确的微技能定义，并且所有已验证微技能都已形成稳定证据，
-    // 此时最合理的下一步不是继续刷题，而是做一次新的知识点复测。
+    // 对已有微技能定义的知识点：全部微技能形成稳定证据后进入整题复测。
     if (
       progress.total > 0 &&
       progress.mastered === progress.total
@@ -4858,8 +4857,57 @@ window.MathAILearningModel = {
         point: point,
         title: "进入知识点复测",
         reason:
-          "这个知识点的已接入微技能都已经形成连续独立正确证据，现在需要用新的整题复测确认是否真正掌握。"
+          "这个知识点的关键步骤已经形成连续独立正确证据，现在用一道新题确认是否真正掌握。"
       };
+    }
+
+    /*
+     * MVP 通用知识点掌握判定：
+     * 对没有预设微技能的全新知识点，不要求先建立复杂子能力模型。
+     * 连续两次整题首次独立答对，就进入知识点复测。
+     */
+    if (progress.total === 0) {
+      const attempts =
+        trainingHistory
+          .filter(function (item) {
+            return (
+              standardizeKnowledgePoint(
+                item.knowledge_point
+              ) === point &&
+              item.attempt_type === "initial_answer"
+            );
+          })
+          .slice()
+          .sort(function (a, b) {
+            return new Date(b.created_at || 0) -
+              new Date(a.created_at || 0);
+          });
+
+      let consecutiveIndependentPasses = 0;
+
+      for (
+        let i = 0;
+        i < attempts.length;
+        i += 1
+      ) {
+        if (
+          attempts[i].passed === true
+        ) {
+          consecutiveIndependentPasses += 1;
+        } else {
+          break;
+        }
+      }
+
+      if (consecutiveIndependentPasses >= 2) {
+        return {
+          action: "retest",
+          point: point,
+          title: "进入知识点复测",
+          reason:
+            "这个新知识点已经连续两次独立答对训练题，现在用一道不同的新题确认掌握情况。"
+        };
+      }
     }
 
     return {
@@ -4867,7 +4915,7 @@ window.MathAILearningModel = {
       point: point,
       title: "继续针对性训练",
       reason:
-        "仍存在尚未稳定的训练证据，继续训练当前最需要解决的微技能。"
+        "仍需要更多独立作答证据，继续围绕这个薄弱知识点训练。"
     };
   }
 
