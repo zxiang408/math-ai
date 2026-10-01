@@ -235,7 +235,7 @@ export async function getArchiveStatus(env, learnerId = DEFAULT_LEARNER_ID) {
       Array.isArray(rows) && rows[0]?.occurred_at
         ? rows[0].occurred_at
         : null,
-    archive_version: "V0.24.0"
+    archive_version: "V0.26.0"
   };
 }
 export async function pushArchive(
@@ -298,7 +298,7 @@ export async function pushArchive(
       },
       body: JSON.stringify([{
         learner_id: normalizedLearnerId,
-        archive_version: "V0.24.0"
+        archive_version: "V0.26.0"
       }])
     }
   );
