@@ -10368,18 +10368,13 @@ window.MathAILearningModel = {
 
       const detail = document.createElement("div");
       detail.className = "history-detail";
+      detail.style.display = "none";
       detail.textContent =
-        "孩子答案：" +
-        (item.student_answer || "无法确认") +
-        " ｜ 正确答案：" +
-        (item.correct_answer || "无法确认") +
-        " ｜ 错误类型：" +
-        (item.error_type || "无法判断") +
-        " ｜ 错误性质：" +
-        (item.error_nature || "无法判断");
+        "这道错题仅作为能力档案证据保存。";
 
       const tags = document.createElement("div");
       tags.className = "history-tags";
+      tags.style.display = "none";
 
       renderHistoryTags(
         tags,
@@ -10392,7 +10387,7 @@ window.MathAILearningModel = {
       const detailButton =
         document.createElement("button");
       detailButton.className = "secondary";
-      detailButton.textContent = "查看分析";
+      detailButton.textContent = "查看归档";
       detailButton.addEventListener(
         "click",
         function () {
@@ -10684,7 +10679,7 @@ window.MathAILearningModel = {
       });
 
     document.getElementById("analysis").textContent =
-      "这道错题已经进入孩子的能力档案。原题不作为教学题，系统现在会生成一道同类型新题让孩子独立作答。";
+      "这道错题已进入能力档案，仅作为后台学习证据保存。原题不讲解、不重复练习；系统会改出一道同类型新题，让孩子独立作答。";
 
     resultCard.style.display = "block";
   }
