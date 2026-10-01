@@ -9,7 +9,7 @@ import {
   pullArchive
 } from "./cloud-archive.js";
 
-const APP_VERSION = "V0.25.0";
+const APP_VERSION = "V0.26.0";
 
 const JSON_HEADERS = {
   "Content-Type": "application/json; charset=UTF-8",
