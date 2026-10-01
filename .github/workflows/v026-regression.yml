@@ -41,3 +41,8 @@ jobs:
         env:
           TEST_URL: http://127.0.0.1:4173/index.html
         run: node tests/v023-ui-sync.spec.mjs
+
+      - name: Run V0.26 cloud rebuild browser regression
+        env:
+          TEST_URL: http://127.0.0.1:4173/index.html
+        run: node tests/v026-cloud-rebuild-ui.spec.mjs
