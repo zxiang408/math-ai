@@ -874,13 +874,13 @@
 
     <div class="notice">
 
-      当前是 V0.25.0。
+      当前是 V0.26.0。
       <br>
       已加入可开关的 Mock AI 开发测试模式；默认不调用外部 AI，可继续验证错题库、能力档案、针对性训练、分步骤辅导与复测闭环。
       <br>
       真实 AI 模式仍保留 Groq → OpenRouter 路由。
       <br>
-      当前已支持基础错题库、知识点标准化统计、能力档案、复测、针对性训练、分步骤互动辅导，以及长期保持模型；V0.25 在 V0.24 基础上增加完整云端档案缓存、离线恢复入口，并保留 push → Supabase → pull 往返校验；V0.22 加入到期复习队列，并在保持复测失败后重启 3→7→14→30… 的保持周期；V0.11 建立知识结构图；V0.12 让前置知识证据参与训练路径；V0.13 进行全局训练调度；V0.14 建立训练→复测→长期保持闭环；V0.15 接入 AI 个性化辅导；V0.16 建立统一数学验证引擎；V0.17 建立统一学习数据模型与旧数据兼容层。
+      当前已支持基础错题库、知识点标准化统计、能力档案、复测、针对性训练、分步骤互动辅导，以及长期保持模型；V0.26 在 V0.25 基础上增加“事件 → 能力模型”云端重建与恢复校验，并保留 push → Supabase → pull 往返校验；V0.22 加入到期复习队列，并在保持复测失败后重启 3→7→14→30… 的保持周期；V0.11 建立知识结构图；V0.12 让前置知识证据参与训练路径；V0.13 进行全局训练调度；V0.14 建立训练→复测→长期保持闭环；V0.15 接入 AI 个性化辅导；V0.16 建立统一数学验证引擎；V0.17 建立统一学习数据模型与旧数据兼容层。
 
     </div>
 
@@ -1090,7 +1090,7 @@
   <div class="footer">
     小学数学 AI · V0.21.0
     <br>
-    <span id="appVersion">程序版本：V0.21.0 · Mock AI 可切换 · 微技能依赖调度</span>
+    <span id="appVersion">程序版本：V0.26.0 · Mock AI 可切换 · 云端事件能力重建</span>
   </div>
 
 </div>
@@ -7457,7 +7457,7 @@ window.MathAILearningModel = {
     }
   );
 
-  const CLOUD_SYNC_VERSION = "V0.25.0";
+  const CLOUD_SYNC_VERSION = "V0.26.0";
   const CLOUD_SYNC_META_KEY = "math_ai_cloud_sync_meta_v025";
   const CLOUD_ARCHIVE_CACHE_KEY = "math_ai_cloud_archive_cache_v025";
   const CLOUD_ARCHIVE_CACHE_LIMIT = 5000;
@@ -7467,6 +7467,7 @@ window.MathAILearningModel = {
   let cloudSyncQueued = false;
   let cloudSyncInitialized = false;
   let cloudSyncHydrating = false;
+  let cloudAbilitySnapshot = null;
 
   function readCloudSyncMeta() {
     try {
@@ -7650,22 +7651,35 @@ window.MathAILearningModel = {
     }
 
     if (cloudSyncVerification) {
+      let verificationText = "";
+
       if (meta.round_trip_verified === true) {
-        cloudSyncVerification.textContent =
+        verificationText =
           "✅ 最近一次校验已通过：push → Supabase → pull，云端事件集合包含本地事件集合。";
       } else if (meta.last_restore_at) {
-        cloudSyncVerification.textContent =
+        verificationText =
           "☁️ 最近一次云端恢复：" +
           formatCloudSyncTime(meta.last_restore_at) +
           "；恢复后的本地档案继续保留。";
       } else if (meta.last_sync_error) {
-        cloudSyncVerification.textContent =
+        verificationText =
           "⚠️ 最近一次同步未完成校验：" +
           meta.last_sync_error;
       } else {
-        cloudSyncVerification.textContent =
-          "尚未进行 V0.25 同步或恢复校验。";
+        verificationText =
+          "尚未进行 V0.26 同步或恢复校验。";
       }
+
+      if (meta.ability_rebuild_verified === true) {
+        verificationText +=
+          " ｜ ✅ V0.26 事件 → 能力档案重建校验通过。";
+      } else if (meta.ability_rebuild_error) {
+        verificationText +=
+          " ｜ ⚠️ V0.26 能力重建校验未通过：" +
+          meta.ability_rebuild_error;
+      }
+
+      cloudSyncVerification.textContent = verificationText;
     }
   }
 
@@ -7681,6 +7695,185 @@ window.MathAILearningModel = {
     if (cloudRestoreButton) {
       cloudRestoreButton.disabled = cloudSyncBusy;
     }
+  }
+
+  function setCloudAbilitySnapshot(snapshot) {
+    if (
+      snapshot &&
+      typeof snapshot === "object" &&
+      snapshot.schema_version === "V0.26.0" &&
+      Array.isArray(snapshot.knowledge_points) &&
+      Array.isArray(snapshot.micro_skills)
+    ) {
+      cloudAbilitySnapshot = snapshot;
+      return true;
+    }
+
+    cloudAbilitySnapshot = null;
+    return false;
+  }
+
+  function verifyCloudAbilitySnapshot() {
+    const snapshot = cloudAbilitySnapshot;
+
+    if (!snapshot) {
+      return {
+        verified: false,
+        reason: "云端未返回 V0.26 能力重建快照。"
+      };
+    }
+
+    const model = buildCurrentUnifiedLearningModel();
+
+    const localPoints = new Map();
+    const localPointNames = [];
+    const cloudPointNames = [];
+
+    (Array.isArray(snapshot.knowledge_points)
+      ? snapshot.knowledge_points
+      : []
+    ).forEach(function (item) {
+      if (item && item.knowledge_point) {
+        cloudPointNames.push(String(item.knowledge_point));
+      }
+    });
+
+    const localCandidatePoints = [];
+    model.events.forEach(function (event) {
+      (Array.isArray(event.knowledge_points)
+        ? event.knowledge_points
+        : []
+      ).forEach(function (point) {
+        if (!localCandidatePoints.includes(point)) {
+          localCandidatePoints.push(point);
+        }
+      });
+    });
+
+    localCandidatePoints.forEach(function (point) {
+      const state = deriveKnowledgePointState(model, point);
+      localPoints.set(point, state.state);
+      localPointNames.push(point);
+    });
+
+    const mismatches = [];
+
+    cloudPointNames.forEach(function (point) {
+      const cloud = snapshot.knowledge_points.find(function (item) {
+        return String(item?.knowledge_point || "") === point;
+      });
+
+      if (!localPoints.has(point)) {
+        mismatches.push("本地缺少知识点：" + point);
+        return;
+      }
+
+      const localState = localPoints.get(point);
+      if (localState !== cloud.state) {
+        mismatches.push(
+          point +
+          "：云端 " +
+          cloud.state +
+          "，本地 " +
+          localState
+        );
+      }
+    });
+
+    localPointNames.forEach(function (point) {
+      if (!cloudPointNames.includes(point)) {
+        mismatches.push("云端缺少知识点：" + point);
+      }
+    });
+
+    const cloudSkills = Array.isArray(snapshot.micro_skills)
+      ? snapshot.micro_skills
+      : [];
+
+    cloudSkills.forEach(function (cloudSkill) {
+      const localSkill = deriveMicroSkillState(
+        model,
+        String(cloudSkill?.knowledge_point || ""),
+        String(cloudSkill?.skill_key || "")
+      );
+
+      if (
+        localSkill.state !== String(cloudSkill?.state || "")
+      ) {
+        mismatches.push(
+          String(cloudSkill?.knowledge_point || "") +
+          "::" +
+          String(cloudSkill?.skill_key || "") +
+          "：云端 " +
+          String(cloudSkill?.state || "") +
+          "，本地 " +
+          localSkill.state
+        );
+      }
+    });
+
+    const cloudRecommendation =
+      snapshot.training_recommendation || null;
+
+    let recommendationMismatch = false;
+
+    if (cloudRecommendation) {
+      const localCandidate = cloudPointNames
+        .map(function (point) {
+          const state = deriveKnowledgePointState(model, point);
+          return {
+            point: point,
+            state: state.state
+          };
+        })
+        .filter(function (item) {
+          return item.state !== "mastered" &&
+            item.state !== "observed";
+        })
+        .sort(function (a, b) {
+          const weight = {
+            not_mastered: 100,
+            unstable: 90,
+            learning: 80,
+            recovering: 70,
+            initial_mastery: 40
+          };
+          const diff =
+            (weight[b.state] || 0) -
+            (weight[a.state] || 0);
+          return diff !== 0
+            ? diff
+            : a.point.localeCompare(b.point, "zh-CN");
+        })[0] || null;
+
+      if (
+        localCandidate &&
+        localCandidate.point !==
+          String(cloudRecommendation.knowledge_point || "")
+      ) {
+        recommendationMismatch = true;
+        mismatches.push(
+          "训练建议目标不一致：云端 " +
+          String(cloudRecommendation.knowledge_point || "") +
+          "，本地 " +
+          localCandidate.point
+        );
+      }
+    }
+
+    return {
+      verified:
+        mismatches.length === 0 &&
+        Number(snapshot.event_count || 0) ===
+          Number(model.events.length || 0) &&
+        !recommendationMismatch,
+      event_count: Number(snapshot.event_count || 0),
+      local_event_count: model.events.length,
+      cloud_knowledge_points: cloudPointNames.length,
+      local_knowledge_points: localPointNames.length,
+      cloud_micro_skills: cloudSkills.length,
+      mismatches: mismatches
+    };
   }
 
   function cloudSyncRequest(path, options) {
@@ -7997,6 +8190,8 @@ window.MathAILearningModel = {
         ? pulled.events
         : [];
 
+      setCloudAbilitySnapshot(pulled.ability_snapshot);
+
       cloudSyncHydrating = true;
       try {
         cacheCloudArchiveEvents(events);
@@ -8007,9 +8202,22 @@ window.MathAILearningModel = {
 
       renderHistory();
 
+      const rebuildVerification =
+        verifyCloudAbilitySnapshot();
+
       writeCloudSyncMeta({
         last_restore_at: new Date().toISOString(),
         last_restore_count: events.length,
+        ability_rebuild_verified:
+          rebuildVerification.verified === true,
+        ability_rebuild_error:
+          rebuildVerification.verified
+            ? ""
+            : (
+                rebuildVerification.reason ||
+                (rebuildVerification.mismatches || []).slice(0, 3).join("；") ||
+                "云端能力快照与本地事件推导不一致。"
+              ),
         last_sync_error: ""
       });
 
@@ -8137,6 +8345,8 @@ window.MathAILearningModel = {
         "/api/sync/pull"
       );
 
+      setCloudAbilitySnapshot(result.ability_snapshot);
+
       if (Array.isArray(result.events)) {
         cloudSyncHydrating = true;
         try {
@@ -8146,6 +8356,22 @@ window.MathAILearningModel = {
           cloudSyncHydrating = false;
         }
         renderHistory();
+
+        const rebuildVerification =
+          verifyCloudAbilitySnapshot();
+
+        writeCloudSyncMeta({
+          ability_rebuild_verified:
+            rebuildVerification.verified === true,
+          ability_rebuild_error:
+            rebuildVerification.verified
+              ? ""
+              : (
+                  rebuildVerification.reason ||
+                  (rebuildVerification.mismatches || []).slice(0, 3).join("；") ||
+                  "云端能力快照与本地事件推导不一致。"
+                )
+        });
       }
 
       const localEvents = buildCloudArchiveEvents();
@@ -8212,6 +8438,8 @@ window.MathAILearningModel = {
 
       const pulled = await cloudSyncRequest("/api/sync/pull");
 
+      setCloudAbilitySnapshot(pulled.ability_snapshot);
+
       if (Array.isArray(pulled.events)) {
         cloudSyncHydrating = true;
         try {
@@ -8227,10 +8455,14 @@ window.MathAILearningModel = {
       const pushed = await pushLocalLearningArchive();
 
       const verifiedPull = await cloudSyncRequest("/api/sync/pull");
+      setCloudAbilitySnapshot(verifiedPull.ability_snapshot);
+
       const verification = verifyCloudRoundTrip(
         localEvents,
         verifiedPull.events
       );
+      const rebuildVerification =
+        verifyCloudAbilitySnapshot();
 
       const verified =
         verification.verified === true &&
@@ -8246,7 +8478,17 @@ window.MathAILearningModel = {
         last_cloud_event_count:
           verifiedPull.event_count ?? verification.cloud_returned_count,
         round_trip_verified: verified,
-        last_sync_error: verified
+        ability_rebuild_verified:
+          rebuildVerification.verified === true,
+        ability_rebuild_error:
+          rebuildVerification.verified
+            ? ""
+            : (
+                rebuildVerification.reason ||
+                (rebuildVerification.mismatches || []).slice(0, 3).join("；") ||
+                "云端能力快照与本地事件推导不一致。"
+              ),
+        last_sync_error: verified && rebuildVerification.verified
           ? ""
           : (
             "缺少 " +
@@ -8262,9 +8504,11 @@ window.MathAILearningModel = {
       );
 
       setCloudSyncStatus(
-        (verified
-          ? "✅ push → Supabase → pull 往返校验通过。"
-          : "⚠️ push 已执行，但往返校验未通过，请保留本地档案并检查云端事件。") +
+        (verified && rebuildVerification.verified
+          ? "✅ push → Supabase → pull 往返校验通过；V0.26 事件 → 能力档案重建校验通过。"
+          : verified
+            ? "✅ 事件往返校验通过，但 V0.26 能力重建校验未通过，请检查云端事件。"
+            : "⚠️ push 已执行，但往返校验未通过，请保留本地档案并检查云端事件。") +
         " 本地 " +
         verification.local_count +
         " 条；云端 " +
@@ -9206,7 +9450,23 @@ window.MathAILearningModel = {
       " 条 ｜ 训练 " +
       summary.training_events +
       " 条。" +
-      " 目前仍使用本地历史数据；这套统一数据结构将作为后续 Supabase 云端档案的迁移基础。";
+      (
+        cloudAbilitySnapshot
+          ? " ☁️ V0.26 云端事件重建已返回：知识点 " +
+            cloudAbilitySnapshot.knowledge_point_count +
+            " 个，微技能 " +
+            cloudAbilitySnapshot.micro_skill_count +
+            " 个。" +
+            (
+              cloudAbilitySnapshot.training_recommendation
+                ? " 当前云端训练建议：" +
+                  cloudAbilitySnapshot.training_recommendation.knowledge_point +
+                  "｜" +
+                  cloudAbilitySnapshot.training_recommendation.stateText
+                : ""
+            )
+          : " 当前能力档案仍由本地统一学习数据实时推导；云端事件可用于完整恢复。"
+      );
   }
 
   function renderRetentionQueue(history) {
