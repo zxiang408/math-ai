@@ -1448,6 +1448,33 @@ confidence 为 0 到 1 之间的小数，表示你对整道题识别与分析的
     };
   }
 
+  function makePlainJsonBody(body) {
+    const next = { ...body };
+    delete next.response_format;
+    return next;
+  }
+
+  function parseAnalyzeMessage(message) {
+    const toolCall = Array.isArray(message?.tool_calls)
+      ? message.tool_calls.find(
+          (call) =>
+            call?.type === "function" &&
+            call?.function?.name === "analyze_math_problem",
+        )
+      : null;
+
+    if (toolCall?.function?.arguments) {
+      const parsed = extractJson(
+        toolCall.function.arguments
+      );
+      if (parsed) {
+        return parsed;
+      }
+    }
+
+    return extractJson(message?.content);
+  }
+
   const baseBody = {
     temperature: 0.2,
     max_tokens: 1800,
@@ -1527,83 +1554,111 @@ confidence 为 0 到 1 之间的小数，表示你对整道题识别与分析的
     ],
   };
   for (const provider of providers) {
-    let result = await fetchAIProvider(
-      provider,
-      baseBody,
-      18000,
-    );
+    const attempts = [
+      {
+        label: "json_schema",
+        body: baseBody,
+        timeout: 18000,
+      },
+      {
+        label: "json_object",
+        body: makeJsonObjectFallbackBody(baseBody),
+        timeout: 18000,
+      },
+      {
+        label: "plain_json",
+        body: makePlainJsonBody(baseBody),
+        timeout: 18000,
+      },
+    ];
 
-    // Groq supports JSON Schema, but use JSON Object mode as a compatibility
-    // fallback when the strict schema request is rejected.
-    if (
-      !result.ok &&
-      provider.name === "groq" &&
-      [400, 422].includes(result.status)
-    ) {
-      result = await fetchAIProvider(
+    for (let index = 0; index < attempts.length; index += 1) {
+      const attempt = attempts[index];
+
+      /*
+       * 不同免费模型对 response_format 的兼容程度不同：
+       * 1) 首先尝试 JSON Schema；
+       * 2) 被拒绝或返回普通文本时，降级 JSON Object；
+       * 3) 仍不行时，不发送 response_format，仅依靠提示词要求合法 JSON。
+       */
+      const result = await fetchAIProvider(
         provider,
-        makeJsonObjectFallbackBody(baseBody),
-        30000,
+        attempt.body,
+        attempt.timeout,
       );
-    }
 
-    if (!result.ok) {
-      failures.push({
-        provider: provider.name,
-        status: result.status,
-        reason: result.reason,
-      });
-      continue;
-    }
-
-    const message = result.body?.choices?.[0]?.message;
-
-    const toolCall = Array.isArray(message?.tool_calls)
-      ? message.tool_calls.find(
-          (call) =>
-            call?.type === "function" &&
-            call?.function?.name === "analyze_math_problem",
-        )
-      : null;
-
-    if (toolCall?.function?.arguments) {
-      try {
-        const parsedArgs = JSON.parse(toolCall.function.arguments);
-        const normalized = normalizeResult(parsedArgs);
-        normalized.model =
-          result.body?.model ||
-          provider.model ||
-          provider.name;
-        normalized.ai_provider = provider.name;
-        return jsonResponse(normalized, 200, request);
-      } catch (_) {
+      if (!result.ok) {
         failures.push({
           provider: provider.name,
-          status: 502,
-          reason: "AI 工具调用返回的数据不是有效 JSON。",
+          status: result.status,
+          reason:
+            attempt.label +
+            "：" +
+            (result.reason || ("HTTP " + result.status)),
         });
         continue;
       }
+
+      const message =
+        result.body?.choices?.[0]?.message;
+
+      const parsed =
+        parseAnalyzeMessage(message);
+
+      if (parsed) {
+        const normalized =
+          normalizeResult(parsed);
+
+        /*
+         * 空对象/残缺对象也视为无效，继续尝试兼容模式。
+         */
+        if (
+          normalized.question &&
+          normalized.correct_answer &&
+          normalized.knowledge_points.length > 0
+        ) {
+          normalized.model =
+            result.body?.model ||
+            provider.model ||
+            provider.name;
+          normalized.ai_provider =
+            provider.name;
+          normalized.analysis_mode =
+            attempt.label;
+
+          return jsonResponse(
+            normalized,
+            200,
+            request,
+          );
+        }
+
+        failures.push({
+          provider: provider.name,
+          status: 502,
+          reason:
+            attempt.label +
+            "：AI 返回 JSON，但关键分析字段不完整。",
+        });
+        continue;
+      }
+
+      const rawPreview =
+        contentToText(
+          message?.content
+        ).slice(0, 300);
+
+      failures.push({
+        provider: provider.name,
+        status: 502,
+        reason:
+          attempt.label +
+          "：AI 返回了内容，但无法解析为 JSON。" +
+          (rawPreview
+            ? " 返回片段：" + rawPreview
+            : ""),
+      });
     }
-
-    const content = message?.content;
-    const parsed = extractJson(content);
-
-    if (parsed) {
-      const normalized = normalizeResult(parsed);
-      normalized.model =
-        result.body?.model ||
-        provider.model ||
-        provider.name;
-      normalized.ai_provider = provider.name;
-      return jsonResponse(normalized, 200, request);
-    }
-
-    failures.push({
-      provider: provider.name,
-      status: 502,
-      reason: "AI 没有返回可用的结构化分析结果。",
-    });
   }
 
   return jsonResponse(
