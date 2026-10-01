@@ -1754,47 +1754,6 @@ advance / retry / simplify / finish
   }
 
 
-  const studentNormalized =
-    studentAnswer
-      .trim()
-      .replace(/\s+/g, "");
-
-  const localAccepted =
-    accepted.some(function (value) {
-      return (
-        String(value)
-          .trim()
-          .replace(/\s+/g, "") ===
-        studentNormalized
-      );
-    });
-
-  const studentNumber =
-    extractLastNumericValue(
-      studentNormalized,
-    );
-
-  const numericAccepted =
-    studentNumber !== null &&
-    accepted.some(function (value) {
-      const n = extractLastNumericValue(
-        String(value)
-          .trim()
-          .replace(/\s+/g, ""),
-      );
-
-      return (
-        n !== null &&
-        Math.abs(studentNumber - n) < 1e-10
-      );
-    });
-
-  const deterministicCorrect =
-    localAccepted || numericAccepted;
-
-  const hasDeterministicAnswer =
-    accepted.length > 0;
-
   const stepCorrect =
     hasDeterministicAnswer
       ? deterministicCorrect
