@@ -1,0 +1,43 @@
+name: V0.26 Ability Rebuild Regression
+
+on:
+  push:
+    paths:
+      - "src/ability-rebuilder.js"
+      - "src/cloud-archive.js"
+      - "src/index.js"
+      - "public/index.html"
+      - "tests/v026-ability-rebuild.spec.mjs"
+      - ".github/workflows/v026-regression.yml"
+  workflow_dispatch:
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Run V0.26 ability rebuild regression
+        run: node tests/v026-ability-rebuild.spec.mjs
+
+      - name: Run V0.23 cloud archive regression
+        run: node tests/v023-cloud-archive.spec.mjs
+
+      - name: Install Playwright
+        run: npm install --no-save playwright
+
+      - name: Start static server
+        run: |
+          python3 -m http.server 4173 --directory public > /tmp/math-ai-http.log 2>&1 &
+          echo $! > /tmp/math-ai-http.pid
+
+      - name: Run browser sync regression
+        env:
+          TEST_URL: http://127.0.0.1:4173/index.html
+        run: node tests/v023-ui-sync.spec.mjs
