@@ -2,6 +2,8 @@ const MAX_EVENTS_PER_REQUEST = 250;
 const MAX_PULL_EVENTS = 5000;
 const DEFAULT_LEARNER_ID = "local-default";
 
+import { rebuildAbility } from "./ability-rebuilder.js";
+
 function text(value) {
   return String(value ?? "").trim();
 }
@@ -193,7 +195,7 @@ export async function getArchiveStatus(env, learnerId = DEFAULT_LEARNER_ID) {
       learner_id: learnerId,
       event_count: 0,
       latest_occurred_at: null,
-      archive_version: "V0.24.0"
+      archive_version: "V0.26.0"
     };
   }
 
@@ -394,6 +396,8 @@ export async function pullArchive(
   const match = contentRange.match(/\/([0-9]+)$/);
   const eventCount =
     match ? Number(match[1]) : (Array.isArray(rows) ? rows.length : 0);
+  const archiveEvents = Array.isArray(rows) ? rows : [];
+  const abilitySnapshot = rebuildAbility(archiveEvents);
 
   return {
     ok: true,
@@ -401,7 +405,8 @@ export async function pullArchive(
     event_count: eventCount,
     truncated:
       Array.isArray(rows) && rows.length < eventCount,
-    events: Array.isArray(rows) ? rows : []
+    events: archiveEvents,
+    ability_snapshot: abilitySnapshot
   };
 }
 
