@@ -9,7 +9,7 @@ import {
   pullArchive
 } from "./cloud-archive.js";
 
-const APP_VERSION = "MVP-1.1.0";
+const APP_VERSION = "MVP-1.2.0";
 
 const JSON_HEADERS = {
   "Content-Type": "application/json; charset=UTF-8",
@@ -181,6 +181,35 @@ function standardizeKnowledgePoint(point) {
   return "待归类 / " + String(point).trim();
 }
 
+function inferPrimaryKnowledgePoint(question) {
+  const text = String(question ?? "")
+    .trim()
+    .replace(/\\s+/g, "");
+
+  if (!text) return "";
+
+  // 多块相同正方形地毯/方砖铺满区域：
+  // 核心结构是“单块正方形面积 × 块数”，不能退化成普通四则混合运算。
+  if (
+    /正方形/.test(text) &&
+    /(地毯|方砖|瓷砖|地垫|方块|块)/.test(text) &&
+    /(铺满|铺成|铺设|区域面积|总面积|面积)/.test(text) &&
+    /(块|张|片|个)/.test(text)
+  ) {
+    return "图形与几何 / 正方形面积";
+  }
+
+  if (/正方形/.test(text) && /面积/.test(text)) {
+    return "图形与几何 / 正方形面积";
+  }
+
+  if (/长方形/.test(text) && /面积/.test(text)) {
+    return "图形与几何 / 长方形面积";
+  }
+
+  return "";
+}
+
 function standardizeKnowledgePoints(points) {
   if (!Array.isArray(points)) return [];
 
@@ -321,11 +350,25 @@ function normalizeResult(result) {
   const errorType =
     standardizeErrorType(result?.error_type);
 
+  const question = String(result?.question ?? "").trim();
+  const rawKnowledgePoints =
+    standardizeKnowledgePoints(result?.knowledge_points);
+  const inferredPrimary =
+    inferPrimaryKnowledgePoint(question);
+  const knowledgePoints = inferredPrimary
+    ? [
+        inferredPrimary,
+        ...rawKnowledgePoints.filter(function (point) {
+          return point !== inferredPrimary;
+        })
+      ]
+    : rawKnowledgePoints;
+
   return {
-    question: String(result?.question ?? "").trim(),
+    question: question,
     student_answer: String(result?.student_answer ?? "").trim(),
     correct_answer: String(result?.correct_answer ?? "").trim(),
-    knowledge_points: standardizeKnowledgePoints(result?.knowledge_points),
+    knowledge_points: knowledgePoints,
     error_type: errorType,
     error_nature: standardizeErrorNature(
       result?.error_nature,
@@ -789,6 +832,87 @@ function buildGuidedSteps(knowledgePoint) {
   });
 }
 
+function generateSquareAreaVariantSet(sourceQuestion, point) {
+  const presets = [
+    { count: 12, side: 3.5, unit: "米" },
+    { count: 8, side: 2.5, unit: "米" },
+    { count: 15, side: 2.4, unit: "米" }
+  ];
+
+  const variants = presets.map(function (item) {
+    const singleArea = Number((item.side * item.side).toFixed(6));
+    const totalArea = Number((singleArea * item.count).toFixed(6));
+
+    return {
+      question:
+        "布置活动区时，用" +
+        item.count +
+        "块边长为" +
+        item.side +
+        " " +
+        item.unit +
+        "的正方形地毯把一个区域铺满（不重叠），这个区域的面积是多少平方米？",
+      correct_answer: String(totalArea) + "平方米",
+      knowledge_points: [point],
+      explanation:
+        "先求1块正方形地毯的面积，再乘地毯块数。1块面积是" +
+        item.side +
+        "×" +
+        item.side +
+        "=" +
+        singleArea +
+        "平方米，区域总面积是" +
+        singleArea +
+        "×" +
+        item.count +
+        "=" +
+        totalArea +
+        "平方米。",
+      steps: [
+        {
+          prompt:
+            "第1小步：先只算1块正方形地毯的面积。边长是" +
+            item.side +
+            "米。请填写：1块地毯的面积 = ___ 平方米（只填一个数，不写后面的总面积）。",
+          retry_prompt:
+            "我们只做这一小步：边长×边长。边长是" +
+            item.side +
+            "米，请再算一次，并只填写1块地毯的面积（只填一个数）。",
+          accepted: [
+            String(singleArea),
+            String(singleArea) + "平方米"
+          ]
+        },
+        {
+          prompt:
+            "第2小步：这样的地毯一共有" +
+            item.count +
+            "块。把刚才1块的面积乘以" +
+            item.count +
+            "，请填写整个区域的面积 = ___ 平方米（只填一个数）。",
+          retry_prompt:
+            "再做这一小步：1块地毯的面积 × " +
+            item.count +
+            "块。请只填写整个区域的面积（只填一个数）。",
+          accepted: [
+            String(totalArea),
+            String(totalArea) + "平方米"
+          ]
+        }
+      ]
+    };
+  });
+
+  return {
+    question: variants[0].question,
+    correct_answer: variants[0].correct_answer,
+    knowledge_points: [point],
+    explanation: variants[0].explanation,
+    steps: variants[0].steps,
+    variants: variants
+  };
+}
+
 async function generateSameTypeVariantSet(env, params) {
   const point = String(params?.knowledgePoint || "").trim();
   const sourceQuestion = String(params?.sourceQuestion || "").trim();
@@ -796,6 +920,7 @@ async function generateSameTypeVariantSet(env, params) {
   const sourceCorrectAnswer = String(params?.sourceCorrectAnswer || "").trim();
   const sourceErrorType = String(params?.sourceErrorType || "").trim();
   const sourceErrorNature = String(params?.sourceErrorNature || "").trim();
+  const inferredPrimary = inferPrimaryKnowledgePoint(sourceQuestion);
 
   if (!point || !sourceQuestion) {
     return {
@@ -803,6 +928,18 @@ async function generateSameTypeVariantSet(env, params) {
       status: 400,
       data: { error: "缺少原错题和目标知识点。" }
     };
+  }
+
+  if (inferredPrimary === "图形与几何 / 正方形面积") {
+    const special = generateSquareAreaVariantSet(sourceQuestion, inferredPrimary);
+    if (special) {
+      return {
+        ok: true,
+        status: 200,
+        data: special,
+        model: "local_square_area_variant"
+      };
+    }
   }
 
   const prompt = "你是一名小学数学一对一辅导老师。你要根据孩子刚刚上传的原错题生成后续训练题。\n\n" +
@@ -1372,6 +1509,10 @@ async function tutorStep(request, env) {
     return {
       index: index,
       prompt: String(step?.prompt || ""),
+      retry_prompt: String(step?.retry_prompt || ""),
+      accepted: Array.isArray(step?.accepted)
+        ? step.accepted.map(function (value) { return String(value); })
+        : [],
     };
   });
 
@@ -1536,6 +1677,86 @@ advance / retry / simplify / finish
   const studentNormalized =
     studentAnswer
       .trim()
+      .replace(/\\s+/g, "");
+
+  const localAccepted =
+    accepted.some(function (value) {
+      return (
+        String(value)
+          .trim()
+          .replace(/\\s+/g, "") ===
+        studentNormalized
+      );
+    });
+
+  const studentNumber =
+    extractLastNumericValue(
+      studentNormalized,
+    );
+
+  const numericAccepted =
+    studentNumber !== null &&
+    accepted.some(function (value) {
+      const n = extractLastNumericValue(
+        String(value)
+          .trim()
+          .replace(/\\s+/g, ""),
+      );
+
+      return (
+        n !== null &&
+        Math.abs(studentNumber - n) < 1e-10
+      );
+    });
+
+  const hasDeterministicAnswer =
+    accepted.length > 0;
+
+  // 对固定步骤答案直接本地核验。
+  // 这样“算错了”时不会被 AI 改写成含糊提示，也不会因为模型判断漂移而卡住。
+  if (hasDeterministicAnswer) {
+    const deterministicCorrect =
+      localAccepted || numericAccepted;
+    const isLastStep =
+      stepIndex >= steps.length - 1;
+    const nextStep =
+      !isLastStep && steps[stepIndex + 1]
+        ? String(steps[stepIndex + 1]?.prompt || "").trim()
+        : "";
+
+    return jsonResponse(
+      {
+        enabled: true,
+        correct: deterministicCorrect,
+        action: deterministicCorrect
+          ? (isLastStep ? "finish" : "advance")
+          : "retry",
+        coach_message: deterministicCorrect
+          ? "对了，这一步算对了，我们继续。"
+          : "这一小步还没算对。没关系，我们只重做这一小步。",
+        next_prompt: deterministicCorrect
+          ? (nextStep || "很好，我们继续下一步。")
+          : (
+              String(steps[stepIndex]?.retry_prompt || "").trim() ||
+              String(steps[stepIndex]?.prompt || "").trim() ||
+              "再做一次这一小步，先不要往后做。"
+            ),
+        diagnosis: deterministicCorrect
+          ? "当前步骤答案与预设结果一致。"
+          : "当前步骤答案与预设结果不一致。",
+        confidence: 1,
+        model: "local_step_check",
+        fallback_count: 0,
+      },
+      200,
+      request,
+    );
+  }
+
+
+  const studentNormalized =
+    studentAnswer
+      .trim()
       .replace(/\s+/g, "");
 
   const localAccepted =
@@ -1681,7 +1902,7 @@ async function analyzeImage(request, env) {
 1. 识别题目。
 2. 识别孩子写出的答案；如果照片看不清，明确写“无法确认”。
 3. 给出正确答案；计算时自行核验。
-4. 判断涉及的主要小学数学知识点。知识点名称尽量使用下面的标准名称；若无法匹配，可返回最接近的自然语言名称，程序会继续归类。
+4. 判断涉及的主要小学数学知识点。**主知识点必须选择直接决定解题方法的最具体知识点，不能把“使用了加法/乘法/四则运算”当成故事题的主知识点。**例如“用多块边长相同的正方形地毯铺满区域，求总面积”，主知识点应是“图形与几何 / 正方形面积”，而不是“数与代数 / 四则运算”。知识点名称尽量使用下面的标准名称；若无法匹配，可返回最接近的自然语言名称，程序会继续归类。
 标准知识点包括：
 - 图形与几何 / 正方形面积
 - 图形与几何 / 长方形面积
