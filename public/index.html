@@ -753,12 +753,12 @@
       id="status"
     ></div>
 
-    <div class="notice" id="mockModePanel">
+    <div class="notice" id="mockModePanel" style="display:none;">
       <strong>🧪 开发测试模式</strong><br>
       当前默认不调用 Groq / OpenRouter，页面中的错题、答案和训练作答均为测试数据，不代表真实孩子的学习记录。
       <div class="button-row" style="margin-top:10px;">
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
-          <input type="checkbox" id="mockAiToggle" checked>
+          <input type="checkbox" id="mockAiToggle">
           使用 Mock AI（推荐）
         </label>
       </div>
@@ -874,9 +874,9 @@
 
     <div class="notice">
 
-      当前是 V0.26.0。
+      当前是 MVP 1.0.0。
       <br>
-      已加入可开关的 Mock AI 开发测试模式；默认不调用外部 AI，可继续验证错题库、能力档案、针对性训练、分步骤辅导与复测闭环。
+      上线版本默认使用真实 AI；开发测试模式仅在需要排查问题时临时开启。
       <br>
       真实 AI 模式仍保留 Groq → OpenRouter 路由。
       <br>
@@ -944,7 +944,7 @@
 
     <div class="button-row">
       <button class="primary" id="smartTrainingButton">
-        🧠 智能安排训练
+        🎯 开始今日学习
       </button>
     </div>
 
@@ -1088,9 +1088,9 @@
   </div>
 
   <div class="footer">
-    小学数学 AI · V0.21.0
+    小学数学 AI · MVP 1.0.0
     <br>
-    <span id="appVersion">程序版本：V0.26.0 · Mock AI 可切换 · 云端事件能力重建</span>
+    <span id="appVersion">程序版本：MVP 1.0.0 · 云端学习档案 · 个性化训练</span>
   </div>
 
 </div>
@@ -5616,7 +5616,72 @@ window.MathAILearningModel = {
     return training;
   }
 
-  function showTrainingPanel(point, history, stats, sessionIndex) {
+  async function generateTrainingQuestion(
+    point,
+    focus,
+    sessionIndex,
+    difficulty
+  ) {
+    const local =
+      generateNonRepeatedTargetedTraining(
+        point,
+        focus,
+        sessionIndex,
+        difficulty
+      );
+
+    if (local) {
+      return local;
+    }
+
+    const response =
+      await fetch(
+        "/api/retest/generate",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            knowledge_point: point
+          })
+        }
+      );
+
+    const data =
+      await response.json();
+
+    if (!response.ok) {
+      throw new Error(
+        data.error ||
+        "AI 训练题生成失败。"
+      );
+    }
+
+    if (
+      !data.question ||
+      !data.correct_answer
+    ) {
+      throw new Error(
+        "AI 生成的训练题不完整。"
+      );
+    }
+
+    return {
+      question: String(data.question),
+      correct_answer:
+        String(data.correct_answer),
+      explanation:
+        String(data.explanation || ""),
+      knowledge_points:
+        Array.isArray(data.knowledge_points) &&
+        data.knowledge_points.length > 0
+          ? data.knowledge_points
+          : [point]
+    };
+  }
+
+  async function showTrainingPanel(point, history, stats, sessionIndex) {
     const plan =
       resolveTrainingTarget(
         point,
@@ -5705,15 +5770,39 @@ window.MathAILearningModel = {
           }
         : effectiveFocus;
 
-    const training = generateNonRepeatedTargetedTraining(
-      trainingPoint,
-      scheduledFocus,
-      sessionIndex || 1,
-      microSkillPlan.difficulty
-    );
+    trainingCard.style.display = "block";
+    trainingStatus.textContent =
+      "正在生成针对性训练题……";
+
+    let training;
+
+    try {
+      training =
+        await generateTrainingQuestion(
+          trainingPoint,
+          scheduledFocus,
+          sessionIndex || 1,
+          microSkillPlan.difficulty
+        );
+    } catch (error) {
+      console.error(
+        "训练题生成失败：",
+        error
+      );
+
+      trainingStatus.textContent =
+        "训练题生成失败：" +
+        (
+          error.message ||
+          "请稍后再试。"
+        );
+
+      return;
+    }
 
     if (!training) {
-      trainingCard.style.display = "none";
+      trainingStatus.textContent =
+        "暂时无法生成训练题，请稍后再试。";
       return;
     }
 
@@ -5756,9 +5845,12 @@ window.MathAILearningModel = {
       stepMode: "normal",
       sessionIndex: Math.max(1, Number(sessionIndex || 1)),
       tutor_mode:
+        !useMockAI &&
         (
-          !useMockAI &&
-          trainingPoint === "数与代数 / 倍数关系"
+          trainingPoint === "数与代数 / 倍数关系" ||
+          !getSupportedTrainingPoints().has(
+            trainingPoint
+          )
         )
           ? "ai"
           : "deterministic",
@@ -7014,7 +7106,9 @@ window.MathAILearningModel = {
     }
 
     const passed =
-      localPassed;
+      tutor
+        ? Boolean(tutor.correct)
+        : localPassed;
 
     const tutorAction =
       tutor
@@ -7278,14 +7372,53 @@ window.MathAILearningModel = {
 
   smartTrainingButton.addEventListener(
     "click",
-    function () {
-      const history = loadHistory();
+    async function () {
+      const history =
+        loadHistory();
+
+      const model =
+        buildCurrentUnifiedLearningModel();
+
+      const points = [
+        ...new Set(
+          history.flatMap(function (item) {
+            return standardizeKnowledgePoints(
+              item.knowledge_points
+            );
+          })
+        )
+      ];
+
+      const dueQueue =
+        buildRetentionQueue(
+          model,
+          points,
+          Date.now(),
+          RETENTION_INTERVALS_DAYS
+        );
+
+      if (dueQueue.length > 0) {
+        trainingCard.style.display =
+          "none";
+
+        showRetestPanel(
+          dueQueue[0].knowledge_point,
+          {
+            forceSpaced: true
+          }
+        );
+
+        return;
+      }
+
       const recommendation =
-        getSmartTrainingRecommendation(history);
+        getSmartTrainingRecommendation(
+          history
+        );
 
       if (!recommendation) {
         smartTrainingRecommendation.textContent =
-          "目前还没有可用于智能训练调度的已接入知识点证据。";
+          "目前没有需要强化的知识点。继续上传错题，系统会自动建立学习档案。";
         return;
       }
 
@@ -7296,7 +7429,7 @@ window.MathAILearningModel = {
           loadRetestHistory()
         );
 
-      showTrainingPanel(
+      await showTrainingPanel(
         recommendation.point,
         history,
         stats,
@@ -9211,8 +9344,10 @@ window.MathAILearningModel = {
    * “当前最需要训练”的知识点 / 微技能。
    */
   function getSmartTrainingRecommendation(history) {
-    const supported =
-      getSupportedTrainingPoints();
+    const safeHistory =
+      Array.isArray(history)
+        ? history
+        : [];
 
     const retestHistory =
       loadRetestHistory();
@@ -9220,11 +9355,23 @@ window.MathAILearningModel = {
     const trainingHistory =
       loadTrainingHistory();
 
+    const pointSet = new Set();
+
+    safeHistory.forEach(function (item) {
+      standardizeKnowledgePoints(
+        item.knowledge_points
+      ).forEach(function (point) {
+        if (point) {
+          pointSet.add(point);
+        }
+      });
+    });
+
     const candidates = [];
 
-    supported.forEach(function (point) {
+    [...pointSet].forEach(function (point) {
       const matching =
-        history.filter(function (item) {
+        safeHistory.filter(function (item) {
           return standardizeKnowledgePoints(
             item.knowledge_points
           ).includes(point);
@@ -9237,33 +9384,13 @@ window.MathAILearningModel = {
       const knowledgeState =
         getKnowledgeState(
           point,
-          history,
+          safeHistory,
           retestHistory
         );
 
-      const trainingFocus =
-        getTrainingAbilityFocus(
-          point,
-          trainingHistory
-        );
-
-      const evidenceFocus =
-        getTrainingEvidenceFocus(point);
-
-      let score = 0;
-
-      const stateScore = {
-        not_mastered: 1000,
-        unstable: 900,
-        learning: 800,
-        recovering: 700,
-        initial_mastery: 100,
-        mastered: 0,
-        observed: 0
-      };
-
-      score +=
-        stateScore[knowledgeState.state] || 0;
+      if (knowledgeState.state === "mastered") {
+        return;
+      }
 
       const latestMistake =
         matching
@@ -9281,71 +9408,96 @@ window.MathAILearningModel = {
             )
           : "无法判断";
 
-      if (latestErrorNature === "知识理解不足") {
-        score += 100;
+      if (
+        knowledgeState.state === "observed" &&
+        latestErrorNature === "偶然失误"
+      ) {
+        return;
       }
 
-      if (trainingFocus) {
-        if (trainingFocus.state === "prompted") {
-          score += 500;
-        } else if (trainingFocus.state === "forming") {
-          score += 300;
-        }
+      const trainingFocus =
+        getTrainingAbilityFocus(
+          point,
+          trainingHistory
+        );
 
-        score +=
-          Math.max(
-            0,
-            200 -
-            trainingFocus.independentPasses * 25
-          );
-      } else if (evidenceFocus) {
-        score +=
-          evidenceFocus.failures * 60;
+      const evidenceFocus =
+        getTrainingEvidenceFocus(point);
 
-        score +=
-          evidenceFocus.simplified * 120;
-      } else {
-        score += 80;
-      }
+      const stateScore = {
+        not_mastered: 1000,
+        unstable: 900,
+        learning: 800,
+        recovering: 700,
+        initial_mastery: 300,
+        observed: 200,
+        mastered: 0
+      };
+
+      let score =
+        stateScore[knowledgeState.state] || 0;
 
       if (
-        knowledgeState.stats &&
-        knowledgeState.stats.failures > 0
+        latestErrorNature ===
+        "知识理解不足"
       ) {
-        score +=
-          Math.min(
-            150,
-            knowledgeState.stats.failures * 30
-          );
+        score += 150;
       }
 
-      const plan =
-        resolveTrainingTarget(
-          point,
-          history
+      score += Math.min(
+        200,
+        matching.length * 20
+      );
+
+      if (trainingFocus) {
+        if (
+          trainingFocus.state ===
+          "prompted"
+        ) {
+          score += 400;
+        } else if (
+          trainingFocus.state ===
+          "forming"
+        ) {
+          score += 250;
+        }
+
+        score += Math.max(
+          0,
+          150 -
+          trainingFocus.independentPasses * 20
         );
+      }
+
+      if (evidenceFocus) {
+        score +=
+          evidenceFocus.failures * 50;
+
+        score +=
+          evidenceFocus.simplified * 100;
+      }
 
       candidates.push({
         point: point,
         score: score,
         state: knowledgeState.state,
-        stateText: knowledgeState.stateText,
-        abilityFocus: trainingFocus,
-        evidenceFocus: evidenceFocus,
-        plan: plan
+        stateText:
+          knowledgeState.stateText,
+        abilityFocus:
+          trainingFocus,
+        evidenceFocus:
+          evidenceFocus,
+        plan:
+          resolveTrainingTarget(
+            point,
+            safeHistory
+          )
       });
     });
 
     candidates.sort(function (a, b) {
       if (a.score !== b.score) {
         return b.score - a.score;
-      }
-
-      if (
-        Boolean(a.abilityFocus) !==
-        Boolean(b.abilityFocus)
-      ) {
-        return a.abilityFocus ? -1 : 1;
       }
 
       return a.point.localeCompare(
@@ -9359,6 +9511,7 @@ window.MathAILearningModel = {
       : null;
   }
 
+
   function renderSmartTrainingRecommendation(history) {
     if (
       !smartTrainingRecommendation ||
@@ -9367,13 +9520,44 @@ window.MathAILearningModel = {
       return;
     }
 
+    const model =
+      buildCurrentUnifiedLearningModel();
+
+    const points = [
+      ...new Set(
+        (Array.isArray(history) ? history : [])
+          .flatMap(function (item) {
+            return standardizeKnowledgePoints(
+              item.knowledge_points
+            );
+          })
+      )
+    ];
+
+    const dueQueue =
+      buildRetentionQueue(
+        model,
+        points,
+        Date.now(),
+        RETENTION_INTERVALS_DAYS
+      );
+
+    if (dueQueue.length > 0) {
+      smartTrainingRecommendation.textContent =
+        "今日优先复习：" +
+        dueQueue[0].knowledge_point +
+        "（已有到期的保持复习）";
+      smartTrainingButton.disabled = false;
+      return;
+    }
+
     const recommendation =
       getSmartTrainingRecommendation(history);
 
     if (!recommendation) {
       smartTrainingRecommendation.textContent =
-        "目前还没有可用于智能训练调度的已接入知识点证据。";
-      smartTrainingButton.disabled = true;
+        "目前没有需要强化的知识点。继续上传错题，系统会自动建立学习档案。";
+      smartTrainingButton.disabled = false;
       return;
     }
 
