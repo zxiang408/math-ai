@@ -359,9 +359,11 @@ function getAIProviders(env) {
       apiKey: env.OPENROUTER_API_KEY,
       url: "https://openrouter.ai/api/v1/chat/completions",
       models: [
+        // openrouter/free 会优先选择支持当前请求特性的免费模型；
+        // 对图片分析尤其适合，减少因单一模型排队而长时间等待。
+        "openrouter/free",
         "qwen/qwen3.8-27b:free",
         "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
-        "openrouter/free",
       ],
     });
   }
@@ -1528,7 +1530,7 @@ confidence 为 0 到 1 之间的小数，表示你对整道题识别与分析的
     let result = await fetchAIProvider(
       provider,
       baseBody,
-      30000,
+      18000,
     );
 
     // Groq supports JSON Schema, but use JSON Object mode as a compatibility
