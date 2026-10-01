@@ -9,7 +9,7 @@ import {
   pullArchive
 } from "./cloud-archive.js";
 
-const APP_VERSION = "MVP-1.0.0";
+const APP_VERSION = "MVP-1.1.0";
 
 const JSON_HEADERS = {
   "Content-Type": "application/json; charset=UTF-8",
@@ -469,7 +469,7 @@ async function fetchAIProvider(provider, baseBody, timeoutMs = 20000) {
   }
 }
 
-async function requestStructuredJson(env, prompt, functionName, properties, required) {
+async function requestStructuredJson(env, prompt, functionName, properties, required, maxTokens = 700) {
   const providers = getAIProviders(env);
 
   if (!providers.length) {
@@ -486,7 +486,7 @@ async function requestStructuredJson(env, prompt, functionName, properties, requ
   async function doRequest(provider, useStructuredFormat) {
     const baseBody = {
       temperature: 0.2,
-      max_tokens: 700,
+      max_tokens: maxTokens,
       messages: [
         {
           role: "user",
@@ -738,6 +738,238 @@ function generateFastRetest(knowledgePoint) {
   return null;
 }
 
+
+function buildGuidedSteps(knowledgePoint) {
+  const point = String(knowledgePoint || "").trim();
+
+  const presets = {
+    "数与代数 / 倍数关系": [
+      "先找出较小的数和较大的数分别是几份。",
+      "把两个数合起来，一共是多少份？",
+      "用总数除以总份数，算出1份是多少。"
+    ],
+    "图形与几何 / 正方形面积": [
+      "先看清楚正方形的边长是多少。",
+      "想一想正方形的面积公式是什么？",
+      "用边长×边长算出面积。"
+    ],
+    "图形与几何 / 长方形面积": [
+      "先找出长方形的长和宽。",
+      "想一想长方形的面积公式是什么？",
+      "用长×宽算出面积。"
+    ],
+    "数与代数 / 积的变化规律": [
+      "先找出哪个因数发生了变化。",
+      "这个因数变化了几倍？",
+      "想一想另一个因数不变时，积会怎样变化。"
+    ],
+    "数与代数 / 四则运算": [
+      "先看看题目里有哪些运算。",
+      "想一想哪一种运算要先算。",
+      "完成前一步后，再算下一步。"
+    ],
+    "数与代数 / 小数": [
+      "先把需要计算的小数点位置看清楚。",
+      "想一想小数点应该怎样对齐。",
+      "从低位开始逐位计算，再确定结果的小数点位置。"
+    ],
+    "数与代数 / 比与比例": [
+      "先看清楚两种量的比。",
+      "想一想已知量相当于原来多少份或多少倍。",
+      "根据同样的倍数关系求出另一个量。"
+    ]
+  };
+
+  return (presets[point] || [
+    "先找出题目告诉我们的已知条件。",
+    "想一想这道题最关键的数量关系是什么。",
+    "根据这个关系完成最后一步计算或判断。"
+  ]).map(function (prompt) {
+    return { prompt: prompt };
+  });
+}
+
+async function generateSameTypeVariantSet(env, params) {
+  const point = String(params?.knowledgePoint || "").trim();
+  const sourceQuestion = String(params?.sourceQuestion || "").trim();
+  const sourceStudentAnswer = String(params?.sourceStudentAnswer || "").trim();
+  const sourceCorrectAnswer = String(params?.sourceCorrectAnswer || "").trim();
+  const sourceErrorType = String(params?.sourceErrorType || "").trim();
+  const sourceErrorNature = String(params?.sourceErrorNature || "").trim();
+
+  if (!point || !sourceQuestion) {
+    return {
+      ok: false,
+      status: 400,
+      data: { error: "缺少原错题和目标知识点。" }
+    };
+  }
+
+  const prompt = "你是一名小学数学一对一辅导老师。你要根据孩子刚刚上传的原错题生成后续训练题。\n\n" +
+    "【重要产品规则】\n" +
+    "- 原错题只用于建立孩子能力档案和判断题型。\n" +
+    "- 不讲解原错题，不要求孩子重做原错题。\n" +
+    "- 训练题必须与原错题考查同一种核心题型/方法，但必须是全新题目。\n" +
+    "- 一共生成3道变式题；数字、问法或情境必须有变化，不能只是改一个数字。\n" +
+    "- 第一题用于孩子独立作答；如果孩子不会，再进入逐步骤辅导。\n" +
+    "- 每道题提供2到4个辅导步骤提示。步骤只写给老师后续提问的提示，不写出答案，不直接告诉孩子最终结果。\n" +
+    "- 三道题的难度保持在相近的小学水平，不要突然提高难度。\n" +
+    "- 每道题只有一个明确可核验的答案，并自行再次计算核对。\n" +
+    "- 优先保持原题的核心数量关系/解题方法；不要借入无关知识点。\n" +
+    "- 只返回合法JSON，不要Markdown。\n\n" +
+    "【目标知识点】\n" + point + "\n\n" +
+    "【原错题（只作后台参照）】\n" +
+    "题目：" + sourceQuestion + "\n" +
+    "孩子答案：" + (sourceStudentAnswer || "无法确认") + "\n" +
+    "正确答案：" + (sourceCorrectAnswer || "无法确认") + "\n" +
+    "错误类型：" + (sourceErrorType || "无法判断") + "\n" +
+    "错误性质：" + (sourceErrorNature || "无法判断") + "\n\n" +
+    "请返回一个包含3个元素的 variants 数组。每个元素必须包含 question、correct_answer、knowledge_points、explanation、steps；steps 为2到4个只用于老师提问的简短引导问题，不写答案。";
+
+  const result = await requestStructuredJson(
+    env,
+    prompt,
+    "generate_same_type_variant_set",
+    {
+      variants: {
+        type: "array",
+        minItems: 3,
+        maxItems: 3,
+        items: {
+          type: "object",
+          properties: {
+            question: { type: "string" },
+            correct_answer: { type: "string" },
+            knowledge_points: {
+              type: "array",
+              items: { type: "string" },
+              minItems: 1,
+              maxItems: 4
+            },
+            explanation: { type: "string" },
+            steps: {
+              type: "array",
+              minItems: 2,
+              maxItems: 4,
+              items: {
+                type: "object",
+                properties: {
+                  prompt: { type: "string" }
+                },
+                required: ["prompt"],
+                additionalProperties: false
+              }
+            }
+          },
+          required: [
+            "question",
+            "correct_answer",
+            "knowledge_points",
+            "explanation",
+            "steps"
+          ],
+          additionalProperties: false
+        }
+      }
+    },
+    ["variants"],
+    1800
+  );
+
+  if (result.ok) {
+    const variants = Array.isArray(result.data?.variants)
+      ? result.data.variants
+        .map(function (variant) {
+          const question = String(variant?.question || "").trim();
+          const answer = String(variant?.correct_answer || "").trim();
+          const steps = Array.isArray(variant?.steps)
+            ? variant.steps
+              .map(function (step) {
+                return { prompt: String(step?.prompt || "").trim() };
+              })
+              .filter(function (step) { return step.prompt; })
+              .slice(0, 4)
+            : [];
+
+          return {
+            question: question,
+            correct_answer: answer,
+            knowledge_points: standardizeKnowledgePoints(variant?.knowledge_points),
+            explanation: String(variant?.explanation || "").trim(),
+            steps: steps.length >= 2 ? steps : buildGuidedSteps(point)
+          };
+        })
+        .filter(function (variant) {
+          return variant.question && variant.correct_answer;
+        })
+        .slice(0, 3)
+      : [];
+
+    const uniqueQuestions = new Set(
+      variants.map(function (variant) {
+        return variant.question.replace(/\s+/g, "");
+      })
+    );
+
+    if (variants.length === 3 && uniqueQuestions.size === 3) {
+      return {
+        ok: true,
+        status: 200,
+        data: {
+          question: variants[0].question,
+          correct_answer: variants[0].correct_answer,
+          knowledge_points: [point],
+          explanation: variants[0].explanation,
+          steps: variants[0].steps,
+          variants: variants
+        },
+        model: result.model
+      };
+    }
+  }
+
+  const fallbackVariants = [];
+  const seen = new Set();
+  for (let i = 0; i < 3; i += 1) {
+    const item = generateFastRetest(point);
+    if (!item || seen.has(item.question)) continue;
+    seen.add(item.question);
+    fallbackVariants.push({
+      question: item.question,
+      correct_answer: item.correct_answer,
+      knowledge_points: [point],
+      explanation: item.explanation,
+      steps: buildGuidedSteps(point)
+    });
+  }
+
+  if (fallbackVariants.length === 3) {
+    return {
+      ok: true,
+      status: 200,
+      data: {
+        question: fallbackVariants[0].question,
+        correct_answer: fallbackVariants[0].correct_answer,
+        knowledge_points: [point],
+        explanation: fallbackVariants[0].explanation,
+        steps: fallbackVariants[0].steps,
+        variants: fallbackVariants,
+        fallback: true
+      },
+      model: "local_variant_fallback"
+    };
+  }
+
+  return {
+    ok: false,
+    status: result.status || 502,
+    data: {
+      error: "暂时无法生成足够的同类型新题，请稍后再试。",
+      code: "VARIANT_SET_GENERATION_FAILED"
+    }
+  };
+}
+
 async function generateRetest(request, env) {
   if (request.method === "OPTIONS") {
     const headers = new Headers({
@@ -798,6 +1030,23 @@ async function generateRetest(request, env) {
       { error: "缺少需要复测的知识点。" },
       400,
       request,
+    );
+  }
+
+  if (purpose === "same_type_training") {
+    const variantSet = await generateSameTypeVariantSet(env, {
+      knowledgePoint: knowledgePoint,
+      sourceQuestion: sourceQuestion,
+      sourceStudentAnswer: sourceStudentAnswer,
+      sourceCorrectAnswer: sourceCorrectAnswer,
+      sourceErrorType: sourceErrorType,
+      sourceErrorNature: sourceErrorNature
+    });
+
+    return jsonResponse(
+      variantSet.data,
+      variantSet.status,
+      request
     );
   }
 
@@ -1887,6 +2136,31 @@ async function syncPull(request, env) {
   }
 }
 
+
+async function serveApplicationAsset(request, env) {
+  const url = new URL(request.url);
+  const response = await env.ASSETS.fetch(request);
+
+  if (
+    request.method === "GET" &&
+    (url.pathname === "/" || url.pathname === "/index.html") &&
+    (response.headers.get("content-type") || "").includes("text/html")
+  ) {
+    return new HTMLRewriter()
+      .on("body", {
+        element(element) {
+          element.append(
+            '<script src="/v11-ui.js"></script>',
+            { html: true }
+          );
+        }
+      })
+      .transform(response);
+  }
+
+  return response;
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -1919,6 +2193,6 @@ export default {
       return syncPull(request, env);
     }
 
-    return env.ASSETS.fetch(request);
+    return serveApplicationAsset(request, env);
   },
 };
