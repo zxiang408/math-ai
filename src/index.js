@@ -1,5 +1,6 @@
 import {
   verifyMathAnswer,
+  verifyAcceptedAnswer,
   extractSingleNumericValue
 } from "../public/math-engine.js";
 
@@ -1126,13 +1127,6 @@ async function generateRetest(request, env) {
     return jsonResponse({ error: "只支持 POST 请求。" }, 405, request);
   }
 
-  if (!env.GROQ_API_KEY && !env.OPENROUTER_API_KEY) {
-    return jsonResponse(
-      { error: "服务器尚未配置 GROQ_API_KEY 或 OPENROUTER_API_KEY。" },
-      500,
-      request,
-    );
-  }
 
   let body;
   try {
@@ -1516,6 +1510,48 @@ async function tutorStep(request, env) {
     };
   });
 
+  // 固定答案步骤优先在本地核验。
+  // 这一步不依赖外部 AI，避免 AI 暂时超时/限流时把孩子卡住。
+  const deterministicAccepted = safeSteps[stepIndex]?.accepted || [];
+  if (deterministicAccepted.length > 0) {
+    const verdict = verifyAcceptedAnswer(
+      studentAnswer,
+      deterministicAccepted,
+    );
+    const deterministicCorrect = verdict.correct === true;
+    const isLastStep = stepIndex >= safeSteps.length - 1;
+    const nextStep = !isLastStep
+      ? String(safeSteps[stepIndex + 1]?.prompt || "").trim()
+      : "";
+
+    return jsonResponse(
+      {
+        enabled: true,
+        correct: deterministicCorrect,
+        action: deterministicCorrect
+          ? (isLastStep ? "finish" : "advance")
+          : "retry",
+        coach_message: deterministicCorrect
+          ? "对了，这一步算对了，我们继续。"
+          : "这一小步还没算对。没关系，我们只重做这一小步。",
+        next_prompt: deterministicCorrect
+          ? (nextStep || "很好，我们继续下一步。")
+          : (
+              String(safeSteps[stepIndex]?.retry_prompt || "").trim() ||
+              String(safeSteps[stepIndex]?.prompt || "").trim() ||
+              "再做一次这一小步，先不要往后做。"
+            ),
+        diagnosis: deterministicCorrect
+          ? "当前步骤答案与预设结果一致。"
+          : "当前步骤答案与预设结果不一致。",
+        confidence: 1,
+        model: "local_step_check",
+        fallback_count: 0,
+      },
+      200,
+      request,
+    );
+  }
   const prompt = `你是一名小学数学一对一辅导老师。
 你现在辅导的是一个具体的小学数学知识点。
 
@@ -1669,95 +1705,7 @@ advance / retry / simplify / finish
     action = "retry";
   }
 
-  const accepted =
-    Array.isArray(steps[stepIndex]?.accepted)
-      ? steps[stepIndex].accepted
-      : [];
-
-  const studentNormalized =
-    studentAnswer
-      .trim()
-      .replace(/\\s+/g, "");
-
-  const localAccepted =
-    accepted.some(function (value) {
-      return (
-        String(value)
-          .trim()
-          .replace(/\\s+/g, "") ===
-        studentNormalized
-      );
-    });
-
-  const studentNumber =
-    extractLastNumericValue(
-      studentNormalized,
-    );
-
-  const numericAccepted =
-    studentNumber !== null &&
-    accepted.some(function (value) {
-      const n = extractLastNumericValue(
-        String(value)
-          .trim()
-          .replace(/\\s+/g, ""),
-      );
-
-      return (
-        n !== null &&
-        Math.abs(studentNumber - n) < 1e-10
-      );
-    });
-
-  const hasDeterministicAnswer =
-    accepted.length > 0;
-
-  // 对固定步骤答案直接本地核验。
-  // 这样“算错了”时不会被 AI 改写成含糊提示，也不会因为模型判断漂移而卡住。
-  if (hasDeterministicAnswer) {
-    const deterministicCorrect =
-      localAccepted || numericAccepted;
-    const isLastStep =
-      stepIndex >= steps.length - 1;
-    const nextStep =
-      !isLastStep && steps[stepIndex + 1]
-        ? String(steps[stepIndex + 1]?.prompt || "").trim()
-        : "";
-
-    return jsonResponse(
-      {
-        enabled: true,
-        correct: deterministicCorrect,
-        action: deterministicCorrect
-          ? (isLastStep ? "finish" : "advance")
-          : "retry",
-        coach_message: deterministicCorrect
-          ? "对了，这一步算对了，我们继续。"
-          : "这一小步还没算对。没关系，我们只重做这一小步。",
-        next_prompt: deterministicCorrect
-          ? (nextStep || "很好，我们继续下一步。")
-          : (
-              String(steps[stepIndex]?.retry_prompt || "").trim() ||
-              String(steps[stepIndex]?.prompt || "").trim() ||
-              "再做一次这一小步，先不要往后做。"
-            ),
-        diagnosis: deterministicCorrect
-          ? "当前步骤答案与预设结果一致。"
-          : "当前步骤答案与预设结果不一致。",
-        confidence: 1,
-        model: "local_step_check",
-        fallback_count: 0,
-      },
-      200,
-      request,
-    );
-  }
-
-
-  const stepCorrect =
-    hasDeterministicAnswer
-      ? deterministicCorrect
-      : parsed.correct === true;
+  const stepCorrect = parsed.correct === true;
 
   if (stepCorrect) {
     action =
