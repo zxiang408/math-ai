@@ -387,26 +387,39 @@
     );
 
     var box = document.getElementById("v11-upload-box");
-    box.addEventListener("click", function () {
-      var input = document.getElementById("fileInput");
-      if (input) input.click();
-    });
-
     var input = document.getElementById("fileInput");
+
+    if (box) {
+      box.onclick = function () {
+        if (state.busy) return;
+        var picker = document.getElementById("fileInput");
+        if (picker) {
+          // 允许连续选择同一张图片时仍能触发 change。
+          picker.value = "";
+          picker.click();
+        }
+      };
+    }
+
     if (input) {
-      input.onchange = function () {
+      input.onchange = async function () {
         var file = input.files && input.files[0];
         var preview = document.getElementById("v11-preview");
         if (!file || !preview) return;
+
         preview.src = URL.createObjectURL(file);
         preview.style.display = "block";
-        box.classList.add("chosen");
-        var old = box.querySelector(".v11-upload-main");
-        if (old) old.textContent = "照片已选好，点击这里开始分析";
-        var oldSub = box.querySelector(".v11-upload-sub");
-        if (oldSub) oldSub.textContent = "分析只需要一会儿，原题不会进入辅导";
-        box.onclick = analyzeUploadedImage;
+        if (box) box.classList.add("chosen");
+
+        var old = box && box.querySelector(".v11-upload-main");
+        if (old) old.textContent = "照片已选好，正在开始分析…";
+        var oldSub = box && box.querySelector(".v11-upload-sub");
+        if (oldSub) oldSub.textContent = "原题只用于识别和建档，不会拿原题继续辅导。";
+
+        // 选图完成后立即分析，不再要求第二次点击上传区。
+        await analyzeUploadedImage();
       };
+    }
     }
   }
 
