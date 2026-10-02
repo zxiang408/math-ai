@@ -8,6 +8,7 @@
 
   var state = {
     source: null,
+    sourceImage: null,
     variants: [],
     variantIndex: 0,
     mode: "idle",
@@ -17,6 +18,7 @@
     sessionId: "",
     review: null,
     reviewMode: false,
+    secondQuestionRequested: false,
     busy: false
   };
 
@@ -324,8 +326,15 @@
       correct_answer: text(variant && variant.correct_answer),
       knowledge_points: [point],
       explanation: text(variant && variant.explanation),
+      diagram: text(variant && variant.diagram),
       steps: steps
     };
+  }
+
+  function renderVariantDiagram(variant) {
+    var diagram = text(variant && variant.diagram);
+    if (!diagram) return "";
+    return '<pre class="v11-diagram">' + escapeHTML(diagram) + '</pre>';
   }
 
   function buildChildHint(variant, stepIndex) {
@@ -353,6 +362,8 @@
 
   function renderHome() {
     state.mode = "idle";
+    state.sourceImage = null;
+    state.secondQuestionRequested = false;
     state.reviewMode = false;
     state.review = null;
 
@@ -442,7 +453,9 @@
       });
 
       state.source = analysis;
+      state.sourceImage = image;
       state.sessionId = uid("session");
+      state.secondQuestionRequested = false;
 
       var point = text(analysis.knowledge_points && analysis.knowledge_points[0]);
       if (!point) throw new Error("暂时没能判断这道题的主要题型，请换一张更清楚的照片。");
@@ -485,8 +498,8 @@
     if (state.busy || !state.source) return;
     state.busy = true;
     setScreen(
-      "我正在给你换三道新题",
-      '<div class="v11-loading"><div class="v11-spinner"></div><div>三道题会考同一种核心方法，但数字、问法或情境都会变化。</div><div class="v11-loading-sub">第一题先自己做；不会时我会陪你一步一步完成。</div></div>',
+      "我先给你一道相关的新题",
+      '<div class="v11-loading"><div class="v11-spinner"></div><div>先做1道，答错了我再给你第2道；答对就先到这里。</div><div class="v11-loading-sub">原题只用于诊断，新题会尽量保持原题的题型骨架。</div></div>',
       ''
     );
 
@@ -497,19 +510,22 @@
         body: {
           knowledge_point: point,
           purpose: "same_type_training",
+          variant_count: 1,
           source_question: text(state.source.question),
           source_student_answer: text(state.source.student_answer),
           source_correct_answer: text(state.source.correct_answer),
           source_error_type: text(state.source.error_type),
-          source_error_nature: text(state.source.error_nature)
+          source_error_nature: text(state.source.error_nature),
+          source_image: state.sourceImage || ""
         }
       });
 
       var list = Array.isArray(data.variants) ? data.variants : [];
-      if (list.length < 3 && data.question) {
-        list.unshift(data);
+      if (list.length < 1 && data.question) {
+        list = [data];
       }
-      state.variants = list.slice(0, 3).map(function (item) {
+
+      state.variants = list.slice(0, 1).map(function (item) {
         return normalizeVariant(item, point);
       });
 
@@ -518,6 +534,7 @@
       }
 
       state.variantIndex = 0;
+      state.secondQuestionRequested = false;
       saveSession();
       showIndependentQuestion();
     } catch (error) {
@@ -537,7 +554,8 @@
       localStorage.setItem(SESSION_KEY, JSON.stringify({
         source: state.source,
         variants: state.variants,
-        variantIndex: state.variantIndex
+        variantIndex: state.variantIndex,
+        secondQuestionRequested: state.secondQuestionRequested
       }));
     } catch (_) {}
   }
@@ -557,9 +575,10 @@
 
     setScreen(
       "先自己做，不着急",
-      '<div class="v11-progress">变式题 ' + (state.variantIndex + 1) + ' / ' + state.variants.length + '</div>' +
+      '<div class="v11-progress">检验题 ' + (state.variantIndex + 1) + ' / ' + state.variants.length + '</div>' +
+      renderVariantDiagram(variant) +
       '<div class="v11-question">' + escapeHTML(variant.question) + '</div>' +
-      '<div class="v11-independent-note">先独立想一想。答对，我记录“独立掌握”；不会，我们再一步一步做。</div>' +
+      '<div class="v11-independent-note">先独立想一想。答对，今天先到这里；做不对，我再给你一道同类新题。</div>' +
       '<input id="v11-answer" class="v11-input" placeholder="写下你的答案" autocomplete="off">' +
       '<div id="v11-inline-message" class="v11-inline-message"></div>',
       '<button id="v11-submit" class="v11-primary">提交答案</button>'
@@ -620,7 +639,7 @@
           handleIndependentPass();
         }
       } else {
-        handleIndependentFail();
+        await handleIndependentFail();
       }
     } catch (error) {
       var box = document.getElementById("v11-inline-message");
@@ -636,28 +655,71 @@
   function handleIndependentPass() {
     var variant = currentVariant();
     scheduleReview(variant, 0);
-    setScreen(
-      "你刚才是自己做对的",
-      '<div class="v11-success">✓ 这一次算作“独立掌握证据”</div>' +
-      '<div class="v11-result-note">我不会因为原来错过一次，就一直让你重复同一题。现在可以继续做下一道变式题。</div>',
-      '<button id="v11-next" class="v11-primary">' +
-        (state.variantIndex + 1 < state.variants.length ? "继续下一道" : "完成今天练习") +
-      '</button>'
-    );
-    document.getElementById("v11-next").onclick = function () {
-      advanceVariant();
-    };
+    finishSession();
   }
 
-  function handleIndependentFail() {
-    state.mode = "guided";
-    state.stepIndex = 0;
-    state.history = [];
-    state.currentPrompt = "";
+  async function requestSecondVariant() {
+    var current = currentVariant();
+    if (!current) {
+      finishSession();
+      return;
+    }
+
+    setScreen(
+      "我再给你一道相关题",
+      '<div class="v11-loading"><div class="v11-spinner"></div><div>这一道和刚才考查同一个核心方法，但会换一种新的题面。</div><div class="v11-loading-sub">如果这一道也不会，我再陪你一步一步做。</div></div>',
+      ''
+    );
+
+    try {
+      var point = text(state.source && state.source.knowledge_points && state.source.knowledge_points[0]);
+      var data = await callJson("/api/retest/generate", {
+        method: "POST",
+        body: {
+          knowledge_point: point,
+          purpose: "same_type_training",
+          variant_count: 1,
+          exclude_question: text(current.question),
+          source_question: text(state.source && state.source.question),
+          source_student_answer: text(state.source && state.source.student_answer),
+          source_correct_answer: text(state.source && state.source.correct_answer),
+          source_error_type: text(state.source && state.source.error_type),
+          source_error_nature: text(state.source && state.source.error_nature),
+          source_image: state.sourceImage || ""
+        }
+      });
+
+      var list = Array.isArray(data.variants) ? data.variants : [];
+      var item = list[0] || (data.question ? data : null);
+
+      if (!item || !text(item.question)) {
+        throw new Error("第二道相关新题暂时没有生成出来。");
+      }
+
+      state.variants.push(normalizeVariant(item, point));
+      state.variantIndex = state.variants.length - 1;
+      saveSession();
+      showIndependentQuestion();
+    } catch (error) {
+      startGuidance("刚才这道题有点难。我们先把它拆成一步一步，一起弄明白。");
+    }
+  }
+
+  async function handleIndependentFail() {
+    if (
+      state.variantIndex === 0 &&
+      !state.secondQuestionRequested &&
+      state.variants.length === 1
+    ) {
+      state.secondQuestionRequested = true;
+      await requestSecondVariant();
+      return;
+    }
+
     startGuidance("这道新题有点难，我们把它拆成一步一步。");
   }
 
-  function startGuidance(intro) {
+    function startGuidance(intro)  function startGuidance(intro) {
     var variant = currentVariant();
     var firstStep = variant && variant.steps[0];
     state.currentPrompt = text(firstStep && firstStep.prompt) || "先告诉我你现在知道了什么。";
@@ -666,6 +728,7 @@
       "不会也没关系，我们一步一步来",
       '<div class="v11-progress">第 ' + (state.stepIndex + 1) + ' 步</div>' +
       '<div class="v11-guide-intro">' + escapeHTML(intro || "我们把题目拆小一点。") + '</div>' +
+      renderVariantDiagram(variant) +
       '<div class="v11-question compact">' + escapeHTML(variant.question) + '</div>' +
       '<div class="v11-ai-bubble">' + escapeHTML(state.currentPrompt) + '</div>' +
       '<div class="v11-step-hint">这一格只填写当前这一步的答案，不用写后面的步骤。</div>' +
@@ -806,6 +869,7 @@
       "很好，我们继续下一步",
       '<div class="v11-progress">第 ' + (state.stepIndex + 1) + ' 步</div>' +
       '<div class="v11-guide-intro">' + escapeHTML(coachMessage || "很好。") + '</div>' +
+      renderVariantDiagram(variant) +
       '<div class="v11-ai-bubble">' + escapeHTML(text(next && next.prompt) || state.currentPrompt) + '</div>' +
       '<div class="v11-step-hint">这一格只填写当前这一步的答案，不用写后面的步骤。</div>' +
       '<div id="v11-manual-hint" class="v11-manual-hint" style="display:none"></div>' +
@@ -855,12 +919,10 @@
     setScreen(
       "这一题，我们已经走完了",
       '<div class="v11-success">✓ 不是靠直接看答案，而是你自己一步一步完成了。</div>' +
-      '<div class="v11-result-note">下一道会换一种数字、问法或情境，看看你能不能把方法真正用起来。</div>',
-      '<button id="v11-next" class="v11-primary">' +
-        (state.variantIndex + 1 < state.variants.length ? "做下一道变式题" : "完成今天练习") +
-      '</button>'
+      '<div class="v11-result-note">今天的检验已经完成。系统会根据你的表现安排之后的复测。</div>',
+      '<button id="v11-next" class="v11-primary">完成今天练习</button>'
     );
-    document.getElementById("v11-next").onclick = advanceVariant;
+    document.getElementById("v11-next").onclick = finishSession;
   }
 
   function advanceVariant() {
@@ -874,13 +936,16 @@
   }
 
   function finishSession() {
+    var completedCount = Math.max(1, state.variantIndex + 1);
     state.mode = "idle";
     state.reviewMode = false;
     state.review = null;
+    state.sourceImage = null;
+    state.secondQuestionRequested = false;
     try { localStorage.removeItem(SESSION_KEY); } catch (_) {}
     setScreen(
       "今天的练习完成了",
-      '<div class="v11-success">✓ 你完成了 ' + state.variants.length + ' 道变式题</div>' +
+      '<div class="v11-success">✓ 今天完成了 ' + completedCount + ' 道检验题</div>' +
       '<div class="v11-next-review">系统已经把这次表现记下来。到复习时间，它会再给你安排测试。</div>',
       '<button id="v11-home" class="v11-primary">回到首页</button>'
     );
@@ -976,6 +1041,8 @@
 
   function startReview(review) {
     state.review = review;
+    state.sourceImage = null;
+    state.secondQuestionRequested = false;
     state.reviewMode = true;
     state.variants = [{
       question: review.question,
@@ -1051,6 +1118,7 @@
       ".v11-small{margin-top:14px;text-align:center;color:#98a2b3;font-size:13px;line-height:1.6}" +
       ".v11-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:22px}.v11-actions button{border:0;border-radius:11px;padding:12px 18px;font-size:16px;cursor:pointer}.v11-primary{background:#4f46e5;color:#fff}.v11-secondary{background:#eef1f5;color:#344054}" +
       ".v11-progress{color:#667085;font-size:13px;font-weight:700;margin-bottom:10px}.v11-question{padding:18px;border-radius:14px;background:#f8fafc;border:1px solid #eaecf0;font-size:19px;line-height:1.8;font-weight:700}.v11-question.compact{font-size:16px;font-weight:600}" +
+      ".v11-diagram{margin:12px 0;padding:14px;background:#fbfcfe;border:1px dashed #d0d5dd;border-radius:12px;white-space:pre-wrap;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:15px;line-height:1.55;overflow:auto}" +
       ".v11-independent-note,.v11-result-note,.v11-next-review,.v11-archive-rule,.v11-guide-intro{margin-top:14px;color:#475467;line-height:1.7;font-size:14px}" +
       ".v11-input{width:100%;margin-top:16px;padding:13px 14px;border:1px solid #cfd6e0;border-radius:11px;font-size:17px;outline:none}.v11-input:focus{border-color:#6366f1;box-shadow:0 0 0 3px rgba(99,102,241,.12)}" +
       ".v11-inline-message,.v11-step-feedback{min-height:22px;margin-top:10px;font-size:14px}.v11-manual-hint{margin:10px 0;padding:10px 12px;border-radius:10px;background:#fff7ed;color:#9a3412;font-size:14px;line-height:1.6}.v11-step-hint{margin:10px 0 8px;color:#667085;font-size:13px;line-height:1.5}.v11-ai-bubble{margin-top:16px;padding:15px 16px;border-radius:16px 16px 16px 4px;background:#eef2ff;color:#3730a3;line-height:1.75;font-size:16px}.v11-step-feedback .ok{margin-top:10px;color:#15803d;line-height:1.7}.v11-step-feedback .again{margin-top:10px;color:#b45309;line-height:1.7}" +
