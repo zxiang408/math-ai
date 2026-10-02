@@ -513,7 +513,7 @@ async function fetchAIProvider(provider, baseBody, timeoutMs = 20000) {
   }
 }
 
-async function requestStructuredJson(env, prompt, functionName, properties, required, maxTokens = 700) {
+async function requestStructuredJson(env, prompt, functionName, properties, required, maxTokens = 700, imageUrl = null) {
   const providers = getAIProviders(env);
 
   if (!providers.length) {
@@ -534,7 +534,17 @@ async function requestStructuredJson(env, prompt, functionName, properties, requ
       messages: [
         {
           role: "user",
-          content: prompt,
+          content:
+            typeof imageUrl === "string" &&
+            imageUrl.startsWith("data:image/")
+              ? [
+                  { type: "text", text: prompt },
+                  {
+                    type: "image_url",
+                    image_url: { url: imageUrl },
+                  },
+                ]
+              : prompt,
         },
       ],
     };
@@ -833,26 +843,56 @@ function buildGuidedSteps(knowledgePoint) {
   });
 }
 
-function generateSquareAreaVariantSet(sourceQuestion, point) {
+function generateSquareAreaVariantSet(sourceQuestion, point, requestedCount = 3, excludeQuestion = "") {
   const presets = [
     { count: 12, side: 3.5, unit: "米" },
     { count: 8, side: 2.5, unit: "米" },
     { count: 15, side: 2.4, unit: "米" }
   ];
 
-  const variants = presets.map(function (item) {
+  const countRequested = Math.max(
+    1,
+    Math.min(
+      3,
+      Number.isFinite(Number(requestedCount))
+        ? Math.floor(Number(requestedCount))
+        : 3
+    )
+  );
+
+  const normalizedExclude = String(excludeQuestion || "")
+    .replace(/\s+/g, "")
+    .trim();
+
+  const candidates = presets.slice().sort(function () {
+    return Math.random() - 0.5;
+  });
+
+  const variants = [];
+
+  candidates.forEach(function (item) {
+    if (variants.length >= countRequested) return;
+
     const singleArea = Number((item.side * item.side).toFixed(6));
     const totalArea = Number((singleArea * item.count).toFixed(6));
+    const question =
+      "布置活动区时，用" +
+      item.count +
+      "块边长为" +
+      item.side +
+      " " +
+      item.unit +
+      "的正方形地毯把一个区域铺满（不重叠），这个区域的面积是多少平方米？";
 
-    return {
-      question:
-        "布置活动区时，用" +
-        item.count +
-        "块边长为" +
-        item.side +
-        " " +
-        item.unit +
-        "的正方形地毯把一个区域铺满（不重叠），这个区域的面积是多少平方米？",
+    if (
+      normalizedExclude &&
+      question.replace(/\s+/g, "").trim() === normalizedExclude
+    ) {
+      return;
+    }
+
+    variants.push({
+      question: question,
       correct_answer: String(totalArea) + "平方米",
       knowledge_points: [point],
       explanation:
@@ -869,6 +909,7 @@ function generateSquareAreaVariantSet(sourceQuestion, point) {
         "=" +
         totalArea +
         "平方米。",
+      diagram: "",
       steps: [
         {
           prompt:
@@ -901,17 +942,74 @@ function generateSquareAreaVariantSet(sourceQuestion, point) {
           ]
         }
       ]
-    };
+    });
   });
+
+  if (!variants.length) return null;
 
   return {
     question: variants[0].question,
     correct_answer: variants[0].correct_answer,
     knowledge_points: [point],
     explanation: variants[0].explanation,
+    diagram: variants[0].diagram,
     steps: variants[0].steps,
     variants: variants
   };
+}
+
+function inferVariantMode(sourceQuestion, sourceErrorType) {
+  const text = String(sourceQuestion || "")
+    .trim()
+    .replace(/\s+/g, "");
+
+  const visual =
+    /(如图|下图|图中|图形|看图|图示|示意图|正方形|长方形|三角形|平行四边形|梯形|圆形|圆|地毯|方砖|面积图)/.test(text);
+
+  const concept =
+    sourceErrorType === "概念理解错误" ||
+    /(概念|辨析|判断|说法|正确|错误|一定|可能|是否|能否|选择|下列|其中.*正确|其中.*错误)/.test(text);
+
+  if (visual && concept) return "visual_concept";
+  if (visual) return "visual";
+  if (concept) return "concept";
+  return "structural";
+}
+
+function variantSimilarityInstructions(mode) {
+  if (mode === "visual_concept") {
+    return [
+      "这是概念辨析 + 图形题：必须同时保持原题的图形结构和概念判断结构。",
+      "保留原图中的图形类别、数量、连接/包含关系、标注角色、比较对象以及题目要求判断的概念。",
+      "不要把它改写成普通计算题、普通应用题或脱离图形的口头概念题。",
+      "如果原图承载了必要信息，必须继续提供一个自包含的 diagram 字段，用简洁的 Unicode/ASCII 线条和标签表达，不得只写“如图”。"
+    ].join("\n- ");
+  }
+
+  if (mode === "visual") {
+    return [
+      "这是图形题：图形结构优先于知识点名称。",
+      "必须保持与原题相同的图形类别、基本拓扑/组成关系、数量关系、标签角色、已知量与所求量的对应关系以及解题路径。",
+      "不要把图形题泛化成单纯套公式的题，也不要换成无关的生活情境题。",
+      "如果原图是解题所必需的，必须继续提供一个自包含的 diagram 字段，用简洁的 Unicode/ASCII 线条和标签表达；不能写“如图”却没有图。"
+    ].join("\n- ");
+  }
+
+  if (mode === "concept") {
+    return [
+      "这是概念辨析题：必须保持原题的概念边界和辨析对象。",
+      "保持原题判断的是哪两个或哪几类概念、为什么需要比较、结论的逻辑形式（正确/错误、一定/可能、能/不能、选择哪项等）。",
+      "只更换表面数字、对象名称、例子或顺序，不得把概念题改造成普通计算题或完全不同的题型。",
+      "若原题是判断/选择形式，新题优先保持同样的作答形式。"
+    ].join("\n- ");
+  }
+
+  return [
+    "这是同题型结构变式，不是只换知识点。",
+    "先从原题提取题型骨架：对象、已知条件、数量关系/逻辑关系、解题步骤、所求目标和作答形式。",
+    "新题必须沿用同一个骨架和解题路径，只改变数字、对象名称、表面情境或表达顺序。",
+    "不要只因为知识点相同就换成另一种常见题型。"
+  ].join("\n- ");
 }
 
 async function generateSameTypeVariantSet(env, params) {
@@ -921,7 +1019,19 @@ async function generateSameTypeVariantSet(env, params) {
   const sourceCorrectAnswer = String(params?.sourceCorrectAnswer || "").trim();
   const sourceErrorType = String(params?.sourceErrorType || "").trim();
   const sourceErrorNature = String(params?.sourceErrorNature || "").trim();
+  const sourceImage =
+    typeof params?.sourceImage === "string" &&
+    params.sourceImage.startsWith("data:image/")
+      ? params.sourceImage
+      : "";
+
   const inferredPrimary = inferPrimaryKnowledgePoint(sourceQuestion);
+  const rawCount = Number(params?.variantCount);
+  const variantCount = Number.isFinite(rawCount)
+    ? Math.max(1, Math.min(3, Math.floor(rawCount)))
+    : 3;
+  const excludeQuestion = String(params?.excludeQuestion || "").trim();
+  const mode = inferVariantMode(sourceQuestion, sourceErrorType);
 
   if (!point || !sourceQuestion) {
     return {
@@ -932,8 +1042,14 @@ async function generateSameTypeVariantSet(env, params) {
   }
 
   if (inferredPrimary === "图形与几何 / 正方形面积") {
-    const special = generateSquareAreaVariantSet(sourceQuestion, inferredPrimary);
-    if (special) {
+    const special = generateSquareAreaVariantSet(
+      sourceQuestion,
+      inferredPrimary,
+      variantCount,
+      excludeQuestion
+    );
+
+    if (special && special.variants.length >= variantCount) {
       return {
         ok: true,
         status: 200,
@@ -943,76 +1059,109 @@ async function generateSameTypeVariantSet(env, params) {
     }
   }
 
-  const prompt = "你是一名小学数学一对一辅导老师。你要根据孩子刚刚上传的原错题生成后续训练题。\n\n" +
+  const similarityRules = variantSimilarityInstructions(mode);
+  const prompt =
+    "你是一名小学数学一对一辅导老师，负责为同一个孩子生成“高相似结构变式题”。\n\n" +
     "【重要产品规则】\n" +
     "- 原错题只用于建立孩子能力档案和判断题型。\n" +
     "- 不讲解原错题，不要求孩子重做原错题。\n" +
-    "- 训练题必须与原错题考查同一种核心题型/方法，但必须是全新题目。\n" +
-    "- 一共生成3道变式题；数字、问法或情境必须有变化，不能只是改一个数字。\n" +
-    "- 第一题用于孩子独立作答；如果孩子不会，再进入逐步骤辅导。\n" +
-    "- 每道题提供2到4个辅导步骤提示。步骤只写给老师后续提问的提示，不写出答案，不直接告诉孩子最终结果。\n" +
-    "- 三道题的难度保持在相近的小学水平，不要突然提高难度。\n" +
-    "- 每道题只有一个明确可核验的答案，并自行再次计算核对。\n" +
-    "- 优先保持原题的核心数量关系/解题方法；不要借入无关知识点。\n" +
+    "- 首要目标不是“换一个类似知识点”，而是“复制原题的题型骨架，再生成新的实例”。\n" +
+    "- " + similarityRules + "\n" +
+    "- 新题必须与原题是同一核心任务，不得出现新的主要知识点。\n" +
+    "- 每道新题必须独立成题，有唯一可核验答案。\n" +
+    "- 每道新题提供2到4个辅导步骤提示；提示只解决当前步骤，不直接给最终答案。\n" +
+    "- 如果需要 diagram，diagram 必须是自包含的简洁文字图，不得只写“如图”。\n" +
+    (sourceImage
+      ? "- 我同时提供了原错题图片。对于图形、版式、概念辨析对象和标注关系，图片优先级高于OCR文字。\n"
+      : "- 如果题干文字不足以还原图形结构，不要凭空改变题型；优先依据可确认的文字骨架。\n") +
     "- 只返回合法JSON，不要Markdown。\n\n" +
-    "【目标知识点】\n" + point + "\n\n" +
+    "【目标知识点】\n" +
+    point +
+    "\n\n" +
     "【原错题（只作后台参照）】\n" +
     "题目：" + sourceQuestion + "\n" +
     "孩子答案：" + (sourceStudentAnswer || "无法确认") + "\n" +
     "正确答案：" + (sourceCorrectAnswer || "无法确认") + "\n" +
     "错误类型：" + (sourceErrorType || "无法判断") + "\n" +
     "错误性质：" + (sourceErrorNature || "无法判断") + "\n\n" +
-    "请返回一个包含3个元素的 variants 数组。每个元素必须包含 question、correct_answer、knowledge_points、explanation、steps；steps 为2到4个只用于老师提问的简短引导问题，不写答案。";
+    "本次需要生成 " + variantCount + " 道新题。不得重复下面这道已展示题目：\n" +
+    (excludeQuestion || "无") +
+    "\n\n" +
+    "输出前请先在内部完成一次结构自检：比较原题与每道新题的对象、关系、任务目标、作答形式和解题路径；只有仍属于同一个题型骨架时才输出。\n" +
+    "每个 variant 的 diagram 不需要图形时填写空字符串。";
 
-  const result = await requestStructuredJson(
+  const variantSchema = {
+    variants: {
+      type: "array",
+      minItems: variantCount,
+      maxItems: variantCount,
+      items: {
+        type: "object",
+        properties: {
+          question: { type: "string" },
+          correct_answer: { type: "string" },
+          knowledge_points: {
+            type: "array",
+            items: { type: "string" },
+            minItems: 1,
+            maxItems: 4
+          },
+          explanation: { type: "string" },
+          diagram: { type: "string" },
+          steps: {
+            type: "array",
+            minItems: 2,
+            maxItems: 4,
+            items: {
+              type: "object",
+              properties: {
+                prompt: { type: "string" }
+              },
+              required: ["prompt"],
+              additionalProperties: false
+            }
+          }
+        },
+        required: [
+          "question",
+          "correct_answer",
+          "knowledge_points",
+          "explanation",
+          "diagram",
+          "steps"
+        ],
+        additionalProperties: false
+      }
+    }
+  };
+
+  let result = await requestStructuredJson(
     env,
     prompt,
     "generate_same_type_variant_set",
-    {
-      variants: {
-        type: "array",
-        minItems: 3,
-        maxItems: 3,
-        items: {
-          type: "object",
-          properties: {
-            question: { type: "string" },
-            correct_answer: { type: "string" },
-            knowledge_points: {
-              type: "array",
-              items: { type: "string" },
-              minItems: 1,
-              maxItems: 4
-            },
-            explanation: { type: "string" },
-            steps: {
-              type: "array",
-              minItems: 2,
-              maxItems: 4,
-              items: {
-                type: "object",
-                properties: {
-                  prompt: { type: "string" }
-                },
-                required: ["prompt"],
-                additionalProperties: false
-              }
-            }
-          },
-          required: [
-            "question",
-            "correct_answer",
-            "knowledge_points",
-            "explanation",
-            "steps"
-          ],
-          additionalProperties: false
-        }
-      }
-    },
+    variantSchema,
     ["variants"],
-    1800
+    1900,
+    mode === "visual" || mode === "visual_concept"
+      ? sourceImage
+      : null
   );
+
+  if (
+    !result.ok &&
+    sourceImage &&
+    (mode === "visual" || mode === "visual_concept")
+  ) {
+    result = await requestStructuredJson(
+      env,
+      prompt,
+      "generate_same_type_variant_set",
+      variantSchema,
+      ["variants"],
+      1900,
+      null
+    );
+  }
 
   if (result.ok) {
     const variants = Array.isArray(result.data?.variants)
@@ -1023,7 +1172,9 @@ async function generateSameTypeVariantSet(env, params) {
           const steps = Array.isArray(variant?.steps)
             ? variant.steps
               .map(function (step) {
-                return { prompt: String(step?.prompt || "").trim() };
+                return {
+                  prompt: String(step?.prompt || "").trim()
+                };
               })
               .filter(function (step) { return step.prompt; })
               .slice(0, 4)
@@ -1034,13 +1185,20 @@ async function generateSameTypeVariantSet(env, params) {
             correct_answer: answer,
             knowledge_points: standardizeKnowledgePoints(variant?.knowledge_points),
             explanation: String(variant?.explanation || "").trim(),
+            diagram: String(variant?.diagram || "").trim(),
             steps: steps.length >= 2 ? steps : buildGuidedSteps(point)
           };
         })
         .filter(function (variant) {
-          return variant.question && variant.correct_answer;
+          const normalized = variant.question.replace(/\s+/g, "");
+          return (
+            variant.question &&
+            variant.correct_answer &&
+            (!excludeQuestion ||
+              normalized !== excludeQuestion.replace(/\s+/g, ""))
+          );
         })
-        .slice(0, 3)
+        .slice(0, variantCount)
       : [];
 
     const uniqueQuestions = new Set(
@@ -1049,7 +1207,10 @@ async function generateSameTypeVariantSet(env, params) {
       })
     );
 
-    if (variants.length === 3 && uniqueQuestions.size === 3) {
+    if (
+      variants.length === variantCount &&
+      uniqueQuestions.size === variantCount
+    ) {
       return {
         ok: true,
         status: 200,
@@ -1058,6 +1219,7 @@ async function generateSameTypeVariantSet(env, params) {
           correct_answer: variants[0].correct_answer,
           knowledge_points: [point],
           explanation: variants[0].explanation,
+          diagram: variants[0].diagram,
           steps: variants[0].steps,
           variants: variants
         },
@@ -1067,21 +1229,27 @@ async function generateSameTypeVariantSet(env, params) {
   }
 
   const fallbackVariants = [];
-  const seen = new Set();
-  for (let i = 0; i < 3; i += 1) {
+  const seen = new Set(
+    excludeQuestion ? [excludeQuestion.replace(/\s+/g, "")] : []
+  );
+
+  for (let i = 0; i < 3 && fallbackVariants.length < variantCount; i += 1) {
     const item = generateFastRetest(point);
-    if (!item || seen.has(item.question)) continue;
-    seen.add(item.question);
+    if (!item) continue;
+    const normalized = item.question.replace(/\s+/g, "");
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
     fallbackVariants.push({
       question: item.question,
       correct_answer: item.correct_answer,
       knowledge_points: [point],
       explanation: item.explanation,
+      diagram: "",
       steps: buildGuidedSteps(point)
     });
   }
 
-  if (fallbackVariants.length === 3) {
+  if (fallbackVariants.length === variantCount) {
     return {
       ok: true,
       status: 200,
@@ -1090,6 +1258,7 @@ async function generateSameTypeVariantSet(env, params) {
         correct_answer: fallbackVariants[0].correct_answer,
         knowledge_points: [point],
         explanation: fallbackVariants[0].explanation,
+        diagram: "",
         steps: fallbackVariants[0].steps,
         variants: fallbackVariants,
         fallback: true
@@ -1156,6 +1325,20 @@ async function generateRetest(request, env) {
   const sourceErrorNature =
     String(body?.source_error_nature || "").trim();
 
+  const sourceImage =
+    typeof body?.source_image === "string" &&
+    body.source_image.startsWith("data:image/")
+      ? body.source_image
+      : "";
+
+  const variantCount =
+    Number.isFinite(Number(body?.variant_count))
+      ? Math.max(1, Math.min(3, Math.floor(Number(body.variant_count))))
+      : 3;
+
+  const excludeQuestion =
+    String(body?.exclude_question || "").trim();
+
   if (!knowledgePoint) {
     return jsonResponse(
       { error: "缺少需要复测的知识点。" },
@@ -1171,7 +1354,10 @@ async function generateRetest(request, env) {
       sourceStudentAnswer: sourceStudentAnswer,
       sourceCorrectAnswer: sourceCorrectAnswer,
       sourceErrorType: sourceErrorType,
-      sourceErrorNature: sourceErrorNature
+      sourceErrorNature: sourceErrorNature,
+      sourceImage: sourceImage,
+      variantCount: variantCount,
+      excludeQuestion: excludeQuestion
     });
 
     return jsonResponse(
