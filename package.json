@@ -1,0 +1,11 @@
+{
+  "name": "math-ai",
+  "private": true,
+  "version": "1.2.0",
+  "scripts": {
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "4.145.0"
+  }
+}
