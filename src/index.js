@@ -843,7 +843,91 @@ function buildGuidedSteps(knowledgePoint) {
   });
 }
 
-function isDecimalProductNumberLineQuestion(sourceQuestion) {\n  const text = String(sourceQuestion || "")\n    .trim()\n    .replace(/\s+/g, "");\n\n  return (\n    /\d(?:\.\d)?□[×x*]\d(?:\.\d)?□/.test(text) &&\n    /(数轴|点.*可能|可能.*点|表示.*积|积.*点)/.test(text) &&\n    /[①②③④]/.test(text)\n  );\n}\n\nfunction generateDecimalProductNumberLineVariantSet(\n  requestedCount = 1,\n  excludeQuestion = ""\n) {\n  const candidates = [\n    {\n      expr: "0.7□×1.8□",\n      low: 0.70 * 1.80,\n      high: 0.79 * 1.89,\n      points: ["0.8", "1.1", "1.3", "1.7"],\n      correctIndex: 2\n    },\n    {\n      expr: "0.6□×1.7□",\n      low: 0.60 * 1.70,\n      high: 0.69 * 1.79,\n      points: ["0.8", "1.0", "1.2", "1.5"],\n      correctIndex: 2\n    }\n  ];\n\n  const count = Math.max(\n    1,\n    Math.min(\n      3,\n      Number.isFinite(Number(requestedCount))\n        ? Math.floor(Number(requestedCount))\n        : 1\n    )\n  );\n\n  const normalizedExclude = String(excludeQuestion || "")\n    .replace(/\s+/g, "")\n    .trim();\n\n  const variants = [];\n\n  for (const item of candidates) {\n    if (variants.length >= count) break;\n\n    const question =\n      "下面能正确表示算式 " +\n      item.expr +\n      " 的积的点可能是（ ）。";\n\n    if (\n      normalizedExclude &&\n      question.replace(/\s+/g, "").trim() === normalizedExclude\n    ) {\n      continue;\n    }\n\n    const diagram =\n      "数轴（每小格代表0.1）\\n" +\n      "0────①" + item.points[0] +\n      "────②" + item.points[1] +\n      "────③" + item.points[2] +\n      "────④" + item.points[3] +\n      "────2";\n\n    const correctLetter = String.fromCharCode(65 + item.correctIndex);\n\n    variants.push({\n      question:\n        question +\n        "\\nA. ①\\nB. ②\\nC. ③\\nD. ④",\n      correct_answer: correctLetter,\n      knowledge_points: ["数与代数 / 小数"],\n      explanation:\n        "先估计两个因数的范围。" +\n        item.expr +\n        " 的积约在 " +\n        item.low.toFixed(2) +\n        " 到 " +\n        item.high.toFixed(2) +\n        " 之间；只有数轴上的点 " +\n        item.points[item.correctIndex] +\n        " 落在这个范围内，所以选择 " +\n        correctLetter + "。",\n      diagram: diagram,\n      steps: [\n        {\n          prompt: "先不要算出精确积。看一看两个因数各自可能在什么范围。",\n          retry_prompt: "提示：□代表0到9的一个数字，先找出两个因数的最小值和最大值。"\n        },\n        {\n          prompt: "再估计乘积的大致范围，和数轴上的4个点逐个比较。",\n          retry_prompt: "提示：先确定乘积的最小值和最大值，再看哪个点落在这个区间里。"\n        }\n      ]\n    });\n  }\n\n  if (!variants.length) return null;\n\n  return {\n    question: variants[0].question,\n    correct_answer: variants[0].correct_answer,\n    knowledge_points: variants[0].knowledge_points,\n    explanation: variants[0].explanation,\n    diagram: variants[0].diagram,\n    steps: variants[0].steps,\n    variants: variants\n  };\n}\n\nfunction generateSquareAreaVariantSet(sourceQuestion, point, requestedCount = 3, excludeQuestion = "") {
+function isDecimalProductNumberLineQuestion(sourceQuestion) {
+  const text = String(sourceQuestion || "")
+    .trim()
+    .replace(/\s+/g, "");
+
+  return (
+    /\d(?:\.\d)?□[×x*]\d(?:\.\d)?□/.test(text) &&
+    /(数轴|点.*可能|可能.*点|表示.*积|积.*点)/.test(text) &&
+    /[①②③④]/.test(text)
+  );
+}
+
+function generateDecimalProductNumberLineVariantSet(requestedCount = 1, excludeQuestion = "") {
+  const candidates = [
+    {
+      expr: "0.7□×1.8□",
+      low: 0.70 * 1.80,
+      high: 0.79 * 1.89,
+      points: ["0.8", "1.1", "1.3", "1.7"],
+      correctIndex: 2
+    },
+    {
+      expr: "0.6□×1.7□",
+      low: 0.60 * 1.70,
+      high: 0.69 * 1.79,
+      points: ["0.8", "1.0", "1.2", "1.5"],
+      correctIndex: 2
+    }
+  ];
+
+  const count = Math.max(1, Math.min(3, Number.isFinite(Number(requestedCount)) ? Math.floor(Number(requestedCount)) : 1));
+  const normalizedExclude = String(excludeQuestion || "").replace(/\s+/g, "").trim();
+  const variants = [];
+
+  for (const item of candidates) {
+    if (variants.length >= count) break;
+
+    const question = "下面能正确表示算式 " + item.expr + " 的积的点可能是（ ）。";
+    if (normalizedExclude && question.replace(/\s+/g, "").trim() === normalizedExclude) continue;
+
+    const diagram =
+      "数轴（每小格代表0.1）\n" +
+      "0────①" + item.points[0] +
+      "────②" + item.points[1] +
+      "────③" + item.points[2] +
+      "────④" + item.points[3] +
+      "────2";
+
+    const correctLetter = String.fromCharCode(65 + item.correctIndex);
+
+    variants.push({
+      question: question + "\nA. ①\nB. ②\nC. ③\nD. ④",
+      correct_answer: correctLetter,
+      knowledge_points: ["数与代数 / 小数"],
+      explanation:
+        "先估计两个因数的范围。" + item.expr +
+        " 的积约在 " + item.low.toFixed(2) + " 到 " + item.high.toFixed(2) +
+        " 之间；只有数轴上的点 " + item.points[item.correctIndex] +
+        " 落在这个范围内，所以选择 " + correctLetter + "。",
+      diagram: diagram,
+      steps: [
+        {
+          prompt: "先不要算出精确积。看一看两个因数各自可能在什么范围。",
+          retry_prompt: "提示：□代表0到9的一个数字，先找出两个因数的最小值和最大值。"
+        },
+        {
+          prompt: "再估计乘积的大致范围，和数轴上的4个点逐个比较。",
+          retry_prompt: "提示：先确定乘积的最小值和最大值，再看哪个点落在这个区间里。"
+        }
+      ]
+    });
+  }
+
+  if (!variants.length) return null;
+  return {
+    question: variants[0].question,
+    correct_answer: variants[0].correct_answer,
+    knowledge_points: variants[0].knowledge_points,
+    explanation: variants[0].explanation,
+    diagram: variants[0].diagram,
+    steps: variants[0].steps,
+    variants: variants
+  };
+}
+function generateSquareAreaVariantSet(sourceQuestion, point, requestedCount = 3, excludeQuestion = "") {
   const presets = [
     { count: 12, side: 3.5, unit: "米" },
     { count: 8, side: 2.5, unit: "米" },
