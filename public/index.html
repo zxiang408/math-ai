@@ -11275,15 +11275,14 @@ window.MathAILearningModel = {
     // 对“多块正方形地毯铺满区域”这类题，前端也做一道最后保险：
     // 就算上游 AI 返回了泛化提示，也必须把孩子引到正确的核心步骤。
     var isSquareCarpet =
-      point === "图形与几何 / 正方形面积" &&
       /正方形/.test(question) &&
       /(地毯|方砖|地垫|瓷砖)/.test(question) &&
       /(块|张|片)/.test(question) &&
       /面积/.test(question);
 
     if (isSquareCarpet) {
-      var countMatch = question.match(/(\\d+(?:\\.\\d+)?)\\s*(?:块|张|片)/);
-      var sideMatch = question.match(/边长(?:为|是)?\\s*(\\d+(?:\\.\\d+)?)/);
+      var countMatch = question.match(/(\d+(?:\.\d+)?)\s*(?:块|张|片)/);
+      var sideMatch = question.match(/边长(?:为|是)?\s*(\d+(?:\.\d+)?)/);
       var count = countMatch ? countMatch[1] : "";
       var side = sideMatch ? sideMatch[1] : "";
 
@@ -11703,18 +11702,61 @@ window.MathAILearningModel = {
     var oldPrompt = state.currentPrompt;
 
     try {
-      var data = await callJson("/api/tutor/step", {
-        method: "POST",
-        body: {
-          knowledge_point: variant.knowledge_points[0],
-          question: variant.question,
-          current_prompt: oldPrompt,
-          student_answer: answer,
-          step_index: state.stepIndex,
-          steps: variant.steps,
-          history: state.history.slice(-8)
-        }
-      });
+      var currentStep = variant.steps[state.stepIndex] || {};
+      var accepted = Array.isArray(currentStep.accepted)
+        ? currentStep.accepted
+        : [];
+      var data = null;
+
+      // 固定答案步骤完全由本地确定性规则核验。
+      // 这类步骤不需要等待 AI，因此即使 AI Tutor 暂时不可用，也不能卡住孩子。
+      if (accepted.length > 0) {
+        var localCorrect = false;
+
+        accepted.some(function (expected) {
+          var verdict = engineVerify(answer, expected);
+          if (verdict && verdict.correct === true) {
+            localCorrect = true;
+            return true;
+          }
+          return false;
+        });
+
+        var nextStep = variant.steps[state.stepIndex + 1];
+        data = {
+          enabled: true,
+          correct: localCorrect,
+          action: localCorrect
+            ? (nextStep ? "advance" : "finish")
+            : "retry",
+          coach_message: localCorrect
+            ? "对了，这一步算对了，我们继续。"
+            : "这一小步还没算对。没关系，我们再只看这一小步。",
+          next_prompt: localCorrect
+            ? text(nextStep && nextStep.prompt) || "很好，我们继续下一步。"
+            : text(currentStep.retry_prompt) ||
+              text(currentStep.prompt) ||
+              buildChildHint(variant, state.stepIndex),
+          diagnosis: localCorrect
+            ? "当前步骤答案与预设结果一致。"
+            : "当前步骤答案与预设结果不一致。",
+          model: "local_step_check",
+          fallback_count: 0
+        };
+      } else {
+        data = await callJson("/api/tutor/step", {
+          method: "POST",
+          body: {
+            knowledge_point: variant.knowledge_points[0],
+            question: variant.question,
+            current_prompt: oldPrompt,
+            student_answer: answer,
+            step_index: state.stepIndex,
+            steps: variant.steps,
+            history: state.history.slice(-8)
+          }
+        });
+      }
 
       var correct = Boolean(data.correct);
       var action = text(data.action) || (correct ? "advance" : "retry");
